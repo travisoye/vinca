@@ -313,7 +313,7 @@ export function ContextDetailPage() {
                 {contextReceipts.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
-                      No decrypted receipts recorded for this context (0 zatoshis).
+                      No decrypted receipts recorded for this context yet. Click &quot;Scan for notes&quot; above to scan compact blocks from the relay.
                     </TableCell>
                   </TableRow>
                 ) : (

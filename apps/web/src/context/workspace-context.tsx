@@ -248,50 +248,25 @@ export function WorkspaceProvider({
             : candidate.unsupportedComponents,
         overlappingContextIds,
         coverage: {
-          source: mode === "live" ? "live-local-scan" : "fixture-sample",
+          source: "live-local-scan",
           birthdayHeight: decodeResult.birthdayHeight || candidate.birthdayHeight,
-          scannedRanges: [
-            {
-              startHeight: decodeResult.birthdayHeight || candidate.birthdayHeight,
-              endHeight: (decodeResult.birthdayHeight || candidate.birthdayHeight) + 100,
-            },
-          ],
+          scannedRanges: [],
           gaps: [],
-          lastScannedHeight: (decodeResult.birthdayHeight || candidate.birthdayHeight) + 100,
-          tipHeight: decodeResult.network === "testnet" ? 2_710_500 : 250,
-          stale: decodeResult.network === "testnet",
+          lastScannedHeight: decodeResult.birthdayHeight || candidate.birthdayHeight,
+          tipHeight: decodeResult.birthdayHeight || candidate.birthdayHeight,
+          stale: false,
         },
-        receiptCount: 1,
+        receiptCount: 0,
         createdAtUtc: new Date().toISOString(),
         note: candidate.description,
-      };
-
-      const newReceipt: Receipt = {
-        id: `rc-imp-${Date.now()}`,
-        contextId: newId,
-        network: decodeResult.network,
-        pool: newContext.supportedPools[0] ?? "orchard",
-        txIdHex: "e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f071829",
-        actionIndex: 0,
-        recipientAddress:
-          decodeResult.network === "testnet"
-            ? "utest1zkv9vinca-imported-context-address-9a1b"
-            : "uregtest1vinca-imported-context-address-2c3d",
-        amountZatoshis: "500000000",
-        blockHeight: newContext.birthdayHeight + 50,
-        observedUtc: new Date().toISOString(),
-        evidence: mode === "live" ? "locally-inspected" : "fixture-sample",
-        memo: { state: "not-requested" },
       };
 
       // 3. Persist to vault if in live mode
       if (mode === "live") {
         await vault.saveEncryptedContext(newContext).catch(() => {});
-        await vault.saveEncryptedReceipt(newReceipt).catch(() => {});
       }
 
       setContexts((prev) => [newContext, ...prev]);
-      setReceipts((prev) => [newReceipt, ...prev]);
       return newId;
     },
     [contexts, mode, vault, worker],
