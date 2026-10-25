@@ -1,0 +1,59 @@
+[package]
+name = "vinca-chain-relay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Public blockchain-data relay for the Vinca disclosure toolkit (testnet/regtest only)"
+
+[[bin]]
+name = "vinca-chain-relay"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+
+# HTTP framework
+axum = { version = "0.7", features = ["http1", "http2", "json", "query", "macros"] }
+tower = { version = "0.5", features = ["timeout", "limit"] }
+tower-http = { version = "0.6", features = ["cors", "compression-br", "timeout", "trace", "limit"] }
+
+# gRPC / lightwalletd
+tonic = { version = "0.12", features = ["transport", "tls", "tls-roots"] }
+prost = "0.13"
+
+# Serialisation
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = "1.0"
+
+# Logging/tracing (structured; never logs private data)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Bounded caching
+moka = { version = "0.12", features = ["future"] }
+
+# Backoff / retry
+tokio-retry = "0.3"
+
+# Configuration
+config = { version = "0.14", default-features = false, features = ["toml"] }
+
+# Hex encoding for compact block data
+hex = "0.4"
+
+# Time / headers
+chrono = { version = "0.4", features = ["serde"] }
+http = "1.0"
+bytes = "1.6"
+
+[dev-dependencies]
+axum-test = "15.0"
+tokio = { version = "1.40", features = ["full", "test-util"] }
+serde_json = { workspace = true }
