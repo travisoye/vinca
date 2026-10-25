@@ -1,0 +1,234 @@
+//! Typed worker communication protocol for WebAssembly bindings.
+
+use crate::state::{clear_all_keys, revoke_key, store_key, with_key};
+use serde::{Deserialize, Serialize};
+use vinca_core::{
+    compare_orchard_keys, decode_uivk, decrypt_full_note_memo, inspect_compact_actions,
+    validate_orchard_receiver, CompactAction, Network, OrchardRawReceiver, VincaError,
+};
+
+/// Incoming worker request message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", content = "payload", rename_all = "snake_case")]
+pub enum WorkerRequest {
+    DecodeKey {
+        raw_key: String,
+        network: Network,
+        label: String,
+    },
+    ValidateReceiver {
+        handle: String,
+        diversifier_hex: String,
+        pk_d_hex: String,
+    },
+    CompareContexts {
+        handle_a: String,
+        handle_b: String,
+    },
+    InspectCompactActions {
+        handle: String,
+        actions: Vec<CompactAction>,
+    },
+    DecryptMemo {
+        handle: String,
+        epk_hex: String,
+        ciphertext_hex: String,
+        nullifier_hex: String,
+        output_index: u32,
+        amount_zatoshis: u64,
+    },
+    RevokeHandle {
+        handle: String,
+    },
+    LockWorkspace,
+}
+
+/// Outgoing worker response message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+pub enum WorkerResponse {
+    Ok {
+        data: serde_json::Value,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
+}
+
+impl WorkerResponse {
+    pub fn success<T: Serialize>(val: &T) -> Self {
+        match serde_json::to_value(val) {
+            Ok(data) => WorkerResponse::Ok { data },
+            Err(e) => WorkerResponse::Error {
+                code: "SERIALIZATION_ERROR".into(),
+                message: e.to_string(),
+            },
+        }
+    }
+
+    pub fn err(err: VincaError) -> Self {
+        let code = match &err {
+            VincaError::MainnetRejected(_) => "MAINNET_REJECTED",
+            VincaError::SpendingKeyRejected(_) => "SPENDING_KEY_REJECTED",
+            VincaError::FullViewingKeyRejected(_) => "UFVK_REJECTED",
+            VincaError::InputTooLarge(_, _) => "INPUT_TOO_LARGE",
+            VincaError::InvalidEncoding(_) => "INVALID_ENCODING",
+            VincaError::NoRetainedComponents => "NO_RETAINED_COMPONENTS",
+            VincaError::HandleNotFound(_) => "HANDLE_NOT_FOUND",
+            _ => "INTERNAL_PROTOCOL_ERROR",
+        };
+        WorkerResponse::Error {
+            code: code.into(),
+            message: err.to_string(),
+        }
+    }
+}
+
+/// Dispatches a typed request and returns a typed response.
+pub fn handle_request(req: WorkerRequest) -> WorkerResponse {
+    match req {
+        WorkerRequest::DecodeKey { raw_key, network, label } => {
+            // Temporary handle during decode
+            let temp_handle = "pending".to_string();
+            match decode_uivk(&raw_key, network, temp_handle, label) {
+                Ok(mut decoded) => {
+                    let opaque_handle = store_key(decoded.retained_orchard);
+                    decoded.summary.handle = opaque_handle;
+                    WorkerResponse::success(&decoded.summary)
+                }
+                Err(err) => WorkerResponse::err(err),
+            }
+        }
+        WorkerRequest::ValidateReceiver { handle, diversifier_hex, pk_d_hex } => {
+            let diversifier_bytes = match hex_to_bytes(&diversifier_hex, 11) {
+                Ok(b) => {
+                    let mut d = [0u8; 11];
+                    d.copy_from_slice(&b);
+                    d
+                }
+                Err(e) => return WorkerResponse::err(e),
+            };
+            let pk_d_bytes = match hex_to_bytes(&pk_d_hex, 32) {
+                Ok(b) => {
+                    let mut pk = [0u8; 32];
+                    pk.copy_from_slice(&b);
+                    pk
+                }
+                Err(e) => return WorkerResponse::err(e),
+            };
+
+            let receiver = OrchardRawReceiver {
+                diversifier: diversifier_bytes,
+                pk_d: pk_d_bytes,
+            };
+
+            let res = with_key(&handle, |key| {
+                Ok(validate_orchard_receiver(key, &receiver))
+            });
+
+            match res {
+                Ok(report) => WorkerResponse::success(&report),
+                Err(err) => WorkerResponse::err(err),
+            }
+        }
+        WorkerRequest::CompareContexts { handle_a, handle_b } => {
+            let res = with_key(&handle_a, |key_a| {
+                with_key(&handle_b, |key_b| {
+                    Ok(compare_orchard_keys(key_a, key_b))
+                })
+            });
+
+            match res {
+                Ok(report) => WorkerResponse::success(&report),
+                Err(err) => WorkerResponse::err(err),
+            }
+        }
+        WorkerRequest::InspectCompactActions { handle, actions } => {
+            let res = with_key(&handle, |key| {
+                inspect_compact_actions(key, &actions)
+            });
+
+            match res {
+                Ok(receipts) => WorkerResponse::success(&receipts),
+                Err(err) => WorkerResponse::err(err),
+            }
+        }
+        WorkerRequest::DecryptMemo {
+            handle,
+            epk_hex,
+            ciphertext_hex,
+            nullifier_hex,
+            output_index,
+            amount_zatoshis,
+        } => {
+            let epk_bytes = match hex_to_bytes(&epk_hex, 32) {
+                Ok(b) => {
+                    let mut epk = [0u8; 32];
+                    epk.copy_from_slice(&b);
+                    epk
+                }
+                Err(e) => return WorkerResponse::err(e),
+            };
+            let ciphertext = match hex::decode(&ciphertext_hex) {
+                Ok(c) => c,
+                Err(_) => {
+                    return WorkerResponse::err(VincaError::InvalidMemo(
+                        "Invalid hex encoding for ciphertext".into(),
+                    ))
+                }
+            };
+
+            let res = with_key(&handle, |key| {
+                decrypt_full_note_memo(
+                    key,
+                    &epk_bytes,
+                    &ciphertext,
+                    nullifier_hex,
+                    output_index,
+                    amount_zatoshis,
+                )
+            });
+
+            match res {
+                Ok(note) => WorkerResponse::success(&note),
+                Err(err) => WorkerResponse::err(err),
+            }
+        }
+        WorkerRequest::RevokeHandle { handle } => {
+            let dropped = revoke_key(&handle);
+            WorkerResponse::success(&dropped)
+        }
+        WorkerRequest::LockWorkspace => {
+            clear_all_keys();
+            WorkerResponse::success(&true)
+        }
+    }
+}
+
+fn hex_to_bytes(s: &str, expected_len: usize) -> Result<Vec<u8>, VincaError> {
+    let bytes = hex::decode(s).map_err(|e| {
+        VincaError::InvalidEncoding(format!("Invalid hex string: {:?}", e))
+    })?;
+    if bytes.len() != expected_len {
+        return Err(VincaError::InvalidEncoding(format!(
+            "Expected {} bytes, got {}",
+            expected_len,
+            bytes.len()
+        )));
+    }
+    Ok(bytes)
+}
+
+// Simple internal hex decoder to avoid extra heavy dependencies
+mod hex {
+    pub fn decode(s: &str) -> Result<Vec<u8>, ()> {
+        if s.len() % 2 != 0 {
+            return Err(());
+        }
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
+            .collect()
+    }
+}
