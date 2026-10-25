@@ -3,7 +3,7 @@ services:
     name: vinca-relay
     runtime: docker
     dockerfilePath: ./services/chain-relay/Dockerfile
-    plan: starter
+    plan: free
     region: oregon
     healthCheckPath: /health
     envVars:
