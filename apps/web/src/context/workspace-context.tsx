@@ -94,12 +94,21 @@ export interface WorkspaceContextValue {
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
-export function WorkspaceProvider({ children }: { children: ReactNode }) {
+export function WorkspaceProvider({
+  children,
+  initialMode = "live",
+}: {
+  children: ReactNode;
+  initialMode?: "demo" | "live";
+}) {
+  const isDemo = initialMode === "demo";
   const [phase, setPhase] = useState<WorkspacePhase>("unlocked");
-  const [mode, setMode] = useState<"demo" | "live">("live");
-  const [contexts, setContexts] = useState<readonly ContextSummary[]>([]);
-  const [receipts, setReceipts] = useState<readonly Receipt[]>([]);
-  const [disclosureHistory, setDisclosureHistory] = useState<readonly DisclosureHistoryItem[]>([]);
+  const [mode, setMode] = useState<"demo" | "live">(initialMode);
+  const [contexts, setContexts] = useState<readonly ContextSummary[]>(isDemo ? fixtureContexts : []);
+  const [receipts, setReceipts] = useState<readonly Receipt[]>(isDemo ? fixtureReceipts : []);
+  const [disclosureHistory, setDisclosureHistory] = useState<readonly DisclosureHistoryItem[]>(
+    isDemo ? initialDisclosureHistory : [],
+  );
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgressUpdate | null>(null);
 

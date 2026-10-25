@@ -32,10 +32,10 @@ import {
 
 export function AppImportPage() {
   const navigate = useNavigate();
-  const { addImportedCandidate, contexts } = useWorkspace();
+  const { addImportedCandidate, contexts, mode } = useWorkspace();
 
-  // Tab mode: live input vs catalog
-  const [activeTab, setActiveTab] = useState<"live" | "catalog">("live");
+  // Tab mode: live input vs catalog (defaults to catalog in demo mode, live in live mode)
+  const [activeTab, setActiveTab] = useState<"live" | "catalog">(mode === "demo" ? "catalog" : "live");
 
   // Live input state
   const [liveKeyString, setLiveKeyString] = useState("");

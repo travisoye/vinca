@@ -36,7 +36,7 @@ describe("route structure", () => {
   it("renders the dashboard shell at /app with workspace status", () => {
     renderAt("/app");
     expect(screen.getByRole("heading", { name: "Workspace overview" })).toBeInTheDocument();
-    expect(screen.getByText(/Workspace: unlocked \(sample\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Workspace: unlocked \(live\)/i)).toBeInTheDocument();
     // Dashboard nav leads to the planned routes.
     expect(screen.getByRole("link", { name: "Import" })).toHaveAttribute("href", "/app/import");
     expect(screen.getByRole("link", { name: "Disclosures" })).toHaveAttribute(

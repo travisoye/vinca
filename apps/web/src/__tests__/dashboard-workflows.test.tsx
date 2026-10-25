@@ -11,7 +11,7 @@ import App from "@/App";
 function renderAt(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <App />
+      <App initialMode="demo" />
     </MemoryRouter>,
   );
 }
