@@ -143,6 +143,7 @@ pub fn validate_response_size(byte_len: usize, limits: &LimitsConfig) -> Result<
 ///
 /// `upstream_hashes` is a map of `height → block_hash_hex` obtained from the
 /// upstream response headers or metadata.
+#[allow(dead_code)]
 pub fn validate_checkpoints(
     profile: &NetworkProfile,
     upstream_hashes: &std::collections::HashMap<u32, String>,
@@ -172,6 +173,7 @@ pub fn validate_checkpoints(
 // ---------------------------------------------------------------------------
 
 /// Validates that a block hash is a 64-character lowercase hex string.
+#[allow(dead_code)]
 pub fn validate_block_hash(raw: &str) -> Result<String, RelayError> {
     if raw.len() != 64 {
         return Err(RelayError::InvalidParameter(format!(
@@ -194,9 +196,11 @@ pub fn validate_block_hash(raw: &str) -> Result<String, RelayError> {
 
 /// Maximum Orchard/Sapling action count per transaction accepted without rejection.
 /// This prevents hostile inputs from causing excessive WASM-side allocations.
+#[allow(dead_code)]
 pub const MAX_ACTIONS_PER_TX: usize = 2_048;
 
 /// Validates that an action count is within the safe processing bound.
+#[allow(dead_code)]
 pub fn validate_action_count(count: usize) -> Result<(), RelayError> {
     if count > MAX_ACTIONS_PER_TX {
         return Err(RelayError::InvalidParameter(format!(

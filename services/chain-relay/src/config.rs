@@ -288,11 +288,17 @@ impl RelayConfig {
     /// Returns true if the URL resembles a known mainnet endpoint.
     fn is_mainnet_url(&self, url: &str) -> bool {
         let lower = url.to_lowercase();
+
+        // If the URL explicitly contains "testnet" or "regtest", it is definitely not mainnet.
+        if lower.contains("testnet") || lower.contains("regtest") {
+            return false;
+        }
+
         // Known mainnet lightwalletd endpoints.
         let mainnet_hints = [
+            "mainnet",
             "mainnet.lightwalletd.com",
             "mainnet.electriccoin.co",
-            ":9067",   // lightwalletd mainnet default port
         ];
         mainnet_hints.iter().any(|hint| lower.contains(hint))
     }
