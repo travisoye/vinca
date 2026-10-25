@@ -106,7 +106,7 @@ pub mod proto {
     }
 
     /// Compact Orchard action for trial decryption.
-    #[derive name, PartialEq, Message)]
+    #[derive(Clone, PartialEq, Message)]
     pub struct CompactOrchardAction {
         #[prost(bytes, tag = "1")]
         pub nullifier: Vec<u8>,
