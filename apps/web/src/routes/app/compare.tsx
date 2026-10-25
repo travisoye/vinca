@@ -66,7 +66,6 @@ export function ComparePage() {
         <PageShell
           title="Compare viewing contexts"
           description="Evaluate capability overlap, receiver scope differences, and duplicate receipts before sharing viewing access."
-          phase={3}
         />
 
         {/* Selection Cards */}

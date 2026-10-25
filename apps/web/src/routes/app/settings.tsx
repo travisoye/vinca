@@ -98,7 +98,6 @@ export function SettingsPage() {
         <PageShell
           title="Vault settings & recovery"
           description="Manage vault security, export encrypted workspace recovery snapshots, and inspect storage diagnostics."
-          phase={3}
         />
 
         <div className="grid gap-6 md:grid-cols-2">

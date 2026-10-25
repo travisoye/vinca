@@ -17,7 +17,6 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useRef,
   useState,
   type ReactNode,
@@ -97,12 +96,10 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<WorkspacePhase>("unlocked");
-  const [mode, setMode] = useState<"demo" | "live">("demo");
-  const [contexts, setContexts] = useState<readonly ContextSummary[]>(fixtureContexts);
-  const [receipts, setReceipts] = useState<readonly Receipt[]>(fixtureReceipts);
-  const [disclosureHistory, setDisclosureHistory] = useState<readonly DisclosureHistoryItem[]>(
-    initialDisclosureHistory,
-  );
+  const [mode, setMode] = useState<"demo" | "live">("live");
+  const [contexts, setContexts] = useState<readonly ContextSummary[]>([]);
+  const [receipts, setReceipts] = useState<readonly Receipt[]>([]);
+  const [disclosureHistory, setDisclosureHistory] = useState<readonly DisclosureHistoryItem[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgressUpdate | null>(null);
 
@@ -114,16 +111,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const worker = getWorkerClient();
   const relay = getRelayClient();
   const scannerRef = useRef<LiveScanner>(new LiveScanner(relay, worker, vault));
-
-  // Initialize demo handles
-  useEffect(() => {
-    for (const ctx of fixtureContexts) {
-      activeHandlesRef.current.set(
-        ctx.id,
-        `vinca-handle-demo-${ctx.id}` as OpaqueKeyHandle,
-      );
-    }
-  }, []);
 
   /**
    * Unlocks the workspace.

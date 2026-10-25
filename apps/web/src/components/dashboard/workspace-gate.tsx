@@ -16,7 +16,7 @@ import { SAMPLE_PASSPHRASE } from "@/fixtures";
 import { Lock, Key, ShieldCheck, AlertCircle } from "lucide-react";
 
 export function WorkspaceGate({ children }: { children: React.ReactNode }) {
-  const { phase, unlock, createVault } = useWorkspace();
+  const { phase, mode, unlock, createVault } = useWorkspace();
   const [passphrase, setPassphrase] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -32,7 +32,11 @@ export function WorkspaceGate({ children }: { children: React.ReactNode }) {
     }
     const ok = await unlock(passphrase);
     if (!ok) {
-      setError(`Incorrect passphrase. The sample passphrase is "${SAMPLE_PASSPHRASE}".`);
+      setError(
+        mode === "demo"
+          ? `Incorrect passphrase. The sample passphrase is "${SAMPLE_PASSPHRASE}".`
+          : "Incorrect passphrase. Please check your vault passphrase.",
+      );
     } else {
       setError(null);
       setPassphrase("");
@@ -87,7 +91,9 @@ export function WorkspaceGate({ children }: { children: React.ReactNode }) {
               label="Vault passphrase"
               help={
                 phase === "locked"
-                  ? `Public demo sample passphrase: ${SAMPLE_PASSPHRASE}`
+                  ? (mode === "demo"
+                      ? `Public demo sample passphrase: ${SAMPLE_PASSPHRASE}`
+                      : "Enter your local encryption passphrase to unlock.")
                   : "Derives local AES-256-GCM vault encryption key via PBKDF2."
               }
             >
@@ -117,15 +123,17 @@ export function WorkspaceGate({ children }: { children: React.ReactNode }) {
           <CardFooter className="flex flex-col gap-3 sm:flex-row sm:justify-between">
             {phase === "locked" ? (
               <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleDemoUnlock}
-                  className="w-full sm:w-auto"
-                >
-                  <Key className="size-4" />
-                  Use demo passphrase
-                </Button>
+                {mode === "demo" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleDemoUnlock}
+                    className="w-full sm:w-auto"
+                  >
+                    <Key className="size-4" />
+                    Use demo passphrase
+                  </Button>
+                )}
                 <Button type="submit" variant="default" className="w-full sm:w-auto">
                   Unlock workspace
                 </Button>

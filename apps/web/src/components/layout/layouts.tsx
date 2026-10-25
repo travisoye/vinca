@@ -135,7 +135,7 @@ const dashboardNav = [
 ] as const;
 
 function AppLayout() {
-  const { phase, lock } = useWorkspace();
+  const { phase, lock, mode } = useWorkspace();
 
   return (
     <div className="flex min-h-screen flex-col bg-muted/30">
@@ -148,14 +148,14 @@ function AppLayout() {
               <span className="text-lg font-semibold tracking-tight">Vinca</span>
             </Link>
             <Badge variant={phase === "unlocked" ? "secondary" : "muted"}>
-              Workspace: {phase} (sample)
+              Workspace: {phase} {mode === "live" ? "(live)" : "(sample)"}
             </Badge>
             {phase === "unlocked" ? (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={lock}
-                aria-label="Lock sample workspace"
+                aria-label="Lock workspace"
                 className="text-xs"
               >
                 Lock

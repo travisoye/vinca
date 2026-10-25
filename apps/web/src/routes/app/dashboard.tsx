@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 
 export function AppDashboardPage() {
-  const { contexts, receipts } = useWorkspace();
+  const { contexts, receipts, mode } = useWorkspace();
   const [selectedId, setSelectedId] = useState<string | null>(contexts[0]?.id ?? null);
 
   const context = contexts.find((entry) => entry.id === selectedId) ?? null;
@@ -53,7 +53,6 @@ export function AppDashboardPage() {
           <PageShell
             title="Workspace overview"
             description="Inspect imported incoming viewing contexts, examine received notes, and monitor scan coverage."
-            phase={3}
           />
           <div className="flex shrink-0 gap-2">
             <Button asChild variant="outline">
@@ -108,10 +107,14 @@ export function AppDashboardPage() {
           <Card>
             <CardHeader className="pb-2">
               <CardDescription className="text-xs uppercase tracking-wider">Evidence Status</CardDescription>
-              <CardTitle className="text-2xl">Sample / Replay</CardTitle>
+              <CardTitle className="text-2xl">
+                {mode === "live" ? "Live Local Scan" : "Sample / Replay"}
+              </CardTitle>
             </CardHeader>
             <CardContent className="text-xs text-muted-foreground">
-              Presentation fixtures · No live-chain claims
+              {mode === "live"
+                ? "Locally inspected via relay · Zero key transmission"
+                : "Presentation fixtures · No live-chain claims"}
             </CardContent>
           </Card>
         </div>
@@ -133,7 +136,23 @@ export function AppDashboardPage() {
           </TabsList>
 
           <TabsContent value="inventory" className="flex min-w-0 flex-col gap-6">
-            <Card className="overflow-hidden">
+            {contexts.length === 0 ? (
+              <Card className="flex flex-col items-center justify-center p-12 text-center">
+                <EmptyState
+                  title="No viewing contexts in vault"
+                  description="Import a testnet or regtest Unified Incoming Viewing Key (UIVK) to start inspecting notes."
+                  action={
+                    <Button asChild className="mt-4">
+                      <Link to="/app/import">
+                        <Plus className="size-4" />
+                        Import incoming viewing key
+                      </Link>
+                    </Button>
+                  }
+                />
+              </Card>
+            ) : (
+              <Card className="overflow-hidden">
               <Table aria-label="Context inventory table" className="min-w-[48rem]">
                 <TableHeader>
                   <TableRow>
@@ -221,6 +240,7 @@ export function AppDashboardPage() {
                 </TableBody>
               </Table>
             </Card>
+            )}
 
             {/* Receipt Preview Region */}
             <div id="context-receipts-preview" role="region" aria-label="Context receipt preview" aria-live="polite">

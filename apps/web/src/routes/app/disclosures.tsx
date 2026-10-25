@@ -139,7 +139,6 @@ export function DisclosuresPage() {
         <PageShell
           title="Disclosures & Package Export"
           description="Deliberately export continuing context access or keyless record snapshots, or inspect received packages."
-          phase={3}
         />
 
         <Tabs defaultValue="prepare" className="w-full">

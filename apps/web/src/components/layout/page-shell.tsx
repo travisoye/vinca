@@ -1,5 +1,4 @@
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import type { HTMLAttributes } from "react";
 
 /**
@@ -13,16 +12,11 @@ export interface PageShellProps extends HTMLAttributes<HTMLElement> {
   phase?: number;
 }
 
-function PageShell({ title, description, phase, className, ...props }: PageShellProps) {
+function PageShell({ title, description, className, ...props }: PageShellProps) {
   return (
     <section className={cn("flex min-w-0 flex-col gap-4", className)} {...props}>
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="page-title">{title}</h1>
-        {phase ? (
-          <Badge variant="secondary">
-            Phase {phase}
-          </Badge>
-        ) : null}
       </div>
       {description ? <p className="body-copy max-w-2xl">{description}</p> : null}
     </section>

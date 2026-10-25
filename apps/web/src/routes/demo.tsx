@@ -88,7 +88,6 @@ export function DemoPage() {
             <PageShell
               title="Sample workspace walkthrough"
               description="Explore Vinca's core workflow and privacy principles using bundled deterministic fixtures."
-              phase={3}
             />
             <div className="flex items-center gap-1.5 rounded-full border border-border bg-background p-1.5 text-xs">
               {DEMO_STEPS.map((s, idx) => (
