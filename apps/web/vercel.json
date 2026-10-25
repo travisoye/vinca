@@ -1,6 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
   "headers": [
     {
       "source": "/assets/(.*)",
@@ -48,12 +53,6 @@
           "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://vercel.live; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data: https://assets.watermelon.sh; img-src 'self' data: blob: https://assets.watermelon.sh https://vercel.live https://*.vercel.app; connect-src 'self' http://localhost:* https://*.vinca.dev https://relay-testnet.vinca.dev https://*.onrender.com https://vercel.live https://*.vercel.app; frame-src 'self' https://vercel.live; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
         }
       ]
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
     }
   ]
 }
