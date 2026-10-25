@@ -1,6 +1,9 @@
 # Rust build artifacts
 /target/
 
+# Project planning and implementation documents
+/implementation docs/
+
 # JavaScript dependencies and generated output
 node_modules/
 dist/

@@ -8,7 +8,7 @@ always separate, mirroring the PRD ledger.
 - PRD (authoritative for order + boundaries): `C:\Users\USER\mynuclearcode\vinca\implementation docs\prd.md`
 - Project root: `C:\Users\USER\mynuclearcode\vinca`
 - Agent instructions (read first): `AGENTS.md` at repo root and `apps/web/AGENTS.md`
-- Last updated: 2026-10-25 — Documentation redesigned into a comprehensive 3-column developer layout with interactive wallet guides and schema specifications. Full validation verified: TypeScript 0 errors, Vitest 115/115 passed (100%), and Vite production build passed (27.38s). Phase 10 release descriptors ready for authorized deployment.
+- Last updated: 2026-10-25 — GitHub repository initialized at `https://github.com/travisoye/vinca`; the `main` branch contains the pushed project history authored as `travisoye <travisoyewale@gmail.com>`. The root `.gitignore` now excludes `implementation docs/`; existing tracked documentation remains tracked. No deployment was performed.
 
 ---
 
