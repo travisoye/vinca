@@ -219,6 +219,7 @@ pub struct RelayConfig {
     pub upstream_allowlist: Vec<String>,
 
     /// One entry per network profile the relay is configured to serve.
+    #[serde(default)]
     pub profiles: Vec<NetworkProfile>,
 
     #[serde(default)]

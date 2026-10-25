@@ -17,9 +17,9 @@ port = 8080
 
 # Exact CORS origins allowed to make cross-origin requests.
 # Set to your Vercel frontend URL. Wildcards are not accepted.
-# Override with WEB_ORIGIN env var: "https://vinca.vercel.app"
+# Override with WEB_ORIGIN env var: "https://vincaonzec.vercel.app"
 allowed_origins = [
-    "https://vinca.vercel.app",
+    "https://vincaonzec.vercel.app",
     "http://localhost:5173",  # local dev only; remove in production
 ]
 
@@ -41,10 +41,10 @@ orchard_activation_height = 1_842_420
 # ironwood_activation_height = <TBD when activated on testnet>
 max_height = 5_000_000  # safety ceiling; update as chain grows
 
-  [[profiles.checkpoints]]
-  height = 1_900_000
-  # Replace with the actual block hash at this height for your chain.
-  hash_hex = "0000000000000000000000000000000000000000000000000000000000000000"
+  # Optional checkpoint validation:
+  # [[profiles.checkpoints]]
+  # height = 1_900_000
+  # hash_hex = "<testnet-block-hash-hex>"
 
 # ─── Regtest profile ─────────────────────────────────────────────────────────
 # Uncomment and configure for a local regtest node.

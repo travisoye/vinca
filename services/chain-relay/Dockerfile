@@ -3,7 +3,7 @@
 # Multi-stage build producing a minimal, unprivileged Debian runner image.
 
 # ─── Stage 1: Build ──────────────────────────────────────────────────────────
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.89-bookworm AS builder
 
 WORKDIR /build
 
@@ -39,6 +39,9 @@ RUN groupadd -g 10001 vinca && \
 
 # Copy binary from builder
 COPY --from=builder /build/target/release/vinca-chain-relay /usr/local/bin/vinca-chain-relay
+
+# Copy configuration
+COPY services/chain-relay/relay.toml* /app/
 
 # Expose default port
 EXPOSE 8080

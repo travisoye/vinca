@@ -137,7 +137,30 @@ fn load_config(path: &str) -> anyhow::Result<RelayConfig> {
                 .map(|v| v.split(',').map(str::trim).map(str::to_string).collect::<Vec<_>>()),
         )?;
 
-    let cfg: RelayConfig = builder.build()?.try_deserialize()?;
+    let mut cfg: RelayConfig = builder.build()?.try_deserialize()?;
+
+    // Support LIGHTWALLETD_TESTNET_URL environment variable (Render / Docker / 12-factor standard)
+    if let Ok(testnet_url) = std::env::var("LIGHTWALLETD_TESTNET_URL") {
+        let trimmed = testnet_url.trim();
+        if !trimmed.is_empty() {
+            if !cfg.upstream_allowlist.iter().any(|allowed| trimmed.starts_with(allowed)) {
+                cfg.upstream_allowlist.push(trimmed.to_string());
+            }
+
+            if cfg.profile_for(config::Network::Testnet).is_none() {
+                cfg.profiles.push(config::NetworkProfile {
+                    network: config::Network::Testnet,
+                    upstream_url: trimmed.to_string(),
+                    sapling_activation_height: 280_000,
+                    orchard_activation_height: 1_842_420,
+                    ironwood_activation_height: None,
+                    checkpoints: vec![],
+                    max_height: None,
+                });
+            }
+        }
+    }
+
     Ok(cfg)
 }
 
