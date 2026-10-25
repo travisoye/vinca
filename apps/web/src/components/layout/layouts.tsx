@@ -1,8 +1,6 @@
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { LogoMark } from "@/components/logo";
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { useWorkspace } from "@/context/workspace-context";
 
 const publicNavLinks = [
   { label: "Docs", href: "/docs" },
@@ -135,8 +133,6 @@ const dashboardNav = [
 ] as const;
 
 function AppLayout() {
-  const { phase, lock, mode } = useWorkspace();
-
   return (
     <div className="flex min-h-screen flex-col bg-muted/30">
       <a href="#main-content" className="skip-link">Skip to content</a>
@@ -147,20 +143,6 @@ function AppLayout() {
               <LogoMark className="size-8 text-foreground" />
               <span className="text-lg font-semibold tracking-tight">Vinca</span>
             </Link>
-            <Badge variant={phase === "unlocked" ? "secondary" : "muted"}>
-              Workspace: {phase} {mode === "live" ? "(live)" : "(sample)"}
-            </Badge>
-            {phase === "unlocked" ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={lock}
-                aria-label="Lock workspace"
-                className="text-xs"
-              >
-                Lock
-              </Button>
-            ) : null}
           </div>
           <nav aria-label="Dashboard" className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
             {dashboardNav.map((link) => (

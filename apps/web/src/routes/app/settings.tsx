@@ -29,7 +29,6 @@ import {
   Database,
   Download,
   HardDrive,
-  Lock,
   Server,
   Trash2,
   Upload,
@@ -37,8 +36,6 @@ import {
 
 export function SettingsPage() {
   const {
-    phase,
-    lock,
     resetWorkspace,
     storageStats,
     exportRecoveryBackup,
@@ -97,46 +94,10 @@ export function SettingsPage() {
       <div className="flex min-w-0 flex-col gap-8">
         <PageShell
           title="Vault settings & recovery"
-          description="Manage vault security, export encrypted workspace recovery snapshots, and inspect storage diagnostics."
+          description="Manage workspace diagnostics, configure public relay connections, and export encrypted recovery snapshots."
         />
 
         <div className="grid gap-6 md:grid-cols-2">
-          {/* Vault Security & Lock Card */}
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <Lock className="size-5 text-primary" />
-                <CardTitle className="text-base">Vault Lock & Security</CardTitle>
-              </div>
-              <CardDescription>
-                Controls for your in-browser encrypted vault
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4 text-sm leading-relaxed">
-              <div className="flex items-center justify-between rounded-lg border border-border p-3">
-                <div>
-                  <p className="font-medium">Current Status</p>
-                  <p className="text-xs text-muted-foreground">Encryption active via WebCrypto PBKDF2</p>
-                </div>
-                <Badge variant={phase === "unlocked" ? "secondary" : "muted"}>
-                  {phase}
-                </Badge>
-              </div>
-
-              <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-                <p className="font-semibold text-foreground">Inactivity Lock Policy:</p>
-                <p>
-                  Workspaces lock automatically after 10 minutes of inactivity. When locked, in-memory decryption keys are discarded, workers are cleared, and UI records are hidden.
-                </p>
-              </div>
-            </CardContent>
-            <CardFooter className="border-t border-border pt-4">
-              <Button variant="outline" onClick={lock} className="w-full">
-                <Lock className="size-4" />
-                Lock workspace immediately
-              </Button>
-            </CardFooter>
-          </Card>
 
           {/* Storage Diagnostics */}
           <Card>
