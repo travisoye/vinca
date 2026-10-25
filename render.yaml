@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: vinca-relay
+    runtime: docker
+    dockerfilePath: ./services/chain-relay/Dockerfile
+    plan: starter
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: WEB_ORIGIN
+        value: "https://vinca.vercel.app"
+      - key: LIGHTWALLETD_TESTNET_URL
+        value: "https://lightwalletd.testnet.electriccoin.co:9067"
+      - key: RUST_LOG
+        value: "info,vinca_chain_relay=info"

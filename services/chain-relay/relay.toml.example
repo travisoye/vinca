@@ -1,0 +1,82 @@
+# relay.toml — Vinca chain relay operator configuration (example)
+#
+# Copy this file to relay.toml and fill in the values for your deployment.
+# Environment variable overrides: RELAY__<FIELD> (double-underscore separator).
+# Top-level shortcuts: PORT, WEB_ORIGIN (comma-separated).
+#
+# SECURITY NOTES
+# ─────────────
+# • This file may contain upstream_url values. Never commit it with credentials
+#   or expose it to the public. Treat it like a server-side secret.
+# • The relay only serves testnet and regtest. Mainnet upstream_url values
+#   cause startup failure.
+# • upstream_allowlist restricts which hosts the relay may connect to. Use it.
+
+# TCP listen port (default: 8080; override with PORT env var on Render).
+port = 8080
+
+# Exact CORS origins allowed to make cross-origin requests.
+# Set to your Vercel frontend URL. Wildcards are not accepted.
+# Override with WEB_ORIGIN env var: "https://vinca.vercel.app"
+allowed_origins = [
+    "https://vinca.vercel.app",
+    "http://localhost:5173",  # local dev only; remove in production
+]
+
+# Upstream allowlist: only these URL prefixes may appear as upstream_url
+# in any profile. Prevents config injection attacks.
+upstream_allowlist = [
+    "https://lightwalletd.testnet.electriccoin.co",
+    "https://testnet.lightwalletd.com",
+    # Add your regtest node here:
+    # "http://localhost:9067",
+]
+
+# ─── Testnet profile ─────────────────────────────────────────────────────────
+[[profiles]]
+network = "testnet"
+upstream_url = "https://lightwalletd.testnet.electriccoin.co:9067"
+sapling_activation_height = 280_000
+orchard_activation_height = 1_842_420
+# ironwood_activation_height = <TBD when activated on testnet>
+max_height = 5_000_000  # safety ceiling; update as chain grows
+
+  [[profiles.checkpoints]]
+  height = 1_900_000
+  # Replace with the actual block hash at this height for your chain.
+  hash_hex = "0000000000000000000000000000000000000000000000000000000000000000"
+
+# ─── Regtest profile ─────────────────────────────────────────────────────────
+# Uncomment and configure for a local regtest node.
+# [[profiles]]
+# network = "regtest"
+# upstream_url = "http://localhost:9067"
+# sapling_activation_height = 1
+# orchard_activation_height = 1
+# max_height = 10_000
+
+# ─── Cache ───────────────────────────────────────────────────────────────────
+[cache]
+# Maximum number of compact block range responses to hold in memory.
+block_cache_capacity = 2048
+# Seconds before a cached block range is considered stale.
+block_cache_ttl_secs = 300
+# Maximum number of transaction responses to cache (transactions are immutable).
+tx_cache_capacity = 1024
+tx_cache_ttl_secs = 3600
+
+# ─── Limits ──────────────────────────────────────────────────────────────────
+[limits]
+# Maximum block range span per request. Clients requesting more get a 400.
+max_block_range_span = 1000
+# Maximum size of any upstream response forwarded to the client (bytes).
+max_response_bytes = 10_485_760  # 10 MiB
+# Maximum request body size (bytes). The relay has no POST routes with
+# private data; this limit protects against accidental large bodies.
+max_request_bytes = 4096
+# Upstream gRPC timeout (seconds).
+upstream_timeout_secs = 30
+# Maximum retry attempts on transient upstream errors.
+max_retries = 3
+# Per-IP rate limit: requests per second.
+rate_limit_rps = 60
