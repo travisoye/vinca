@@ -13,7 +13,7 @@ const footerNavGroups = [
   {
     title: "Explore",
     links: [
-      { label: "Sample dashboard", href: "/app" },
+      { label: "Workbench dashboard", href: "/app" },
       { label: "Documentation", href: "/docs" },
       { label: "Demo preview", href: "/demo" },
     ],
@@ -113,7 +113,7 @@ function PublicLayout() {
             <div className="flex flex-wrap items-center gap-4">
               <span className="inline-flex items-center gap-2">
                 <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
-                Fixture-backed preview
+                Client-side privacy preview
               </span>
               <span className="border-l border-border pl-4">No mainnet support</span>
             </div>

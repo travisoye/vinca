@@ -162,12 +162,12 @@ export function WorkspaceProvider({
   const lock = useCallback(async (): Promise<void> => {
     // Destroy all active handles in worker
     for (const handle of activeHandlesRef.current.values()) {
-      await worker.destroyHandle(handle).catch(() => {});
+      await worker.destroyHandle(handle).catch(() => { });
     }
     activeHandlesRef.current.clear();
 
     if (mode === "live") {
-      await vault.lockVault().catch(() => {});
+      await vault.lockVault().catch(() => { });
     }
 
     setPhase("locked");
@@ -263,7 +263,7 @@ export function WorkspaceProvider({
 
       // 3. Persist to vault if in live mode
       if (mode === "live") {
-        await vault.saveEncryptedContext(newContext).catch(() => {});
+        await vault.saveEncryptedContext(newContext).catch(() => { });
       }
 
       setContexts((prev) => [newContext, ...prev]);
@@ -366,7 +366,7 @@ export function WorkspaceProvider({
       }
 
       if (mode === "live") {
-        await vault.deleteEncryptedContext(id).catch(() => {});
+        await vault.deleteEncryptedContext(id).catch(() => { });
       }
 
       setContexts((prev) => prev.filter((c) => c.id !== id));
@@ -437,7 +437,7 @@ export function WorkspaceProvider({
       };
 
       if (mode === "live") {
-        await vault.saveEncryptedReceipt(updatedReceipt).catch(() => {});
+        await vault.saveEncryptedReceipt(updatedReceipt).catch(() => { });
       }
 
       setReceipts((prev) =>
@@ -525,13 +525,13 @@ export function WorkspaceProvider({
    */
   const resetWorkspace = useCallback(async (): Promise<void> => {
     if (mode === "live") {
-      await vault.lockVault().catch(() => {});
+      await vault.lockVault().catch(() => { });
     }
     setPhase("unlocked");
-    setMode("demo");
-    setContexts(fixtureContexts);
-    setReceipts(fixtureReceipts);
-    setDisclosureHistory(initialDisclosureHistory);
+    setMode("live");
+    setContexts([]);
+    setReceipts([]);
+    setDisclosureHistory([]);
   }, [mode, vault]);
 
   /**
@@ -545,7 +545,7 @@ export function WorkspaceProvider({
     activeContexts: contexts.filter((c) => c.status === "active").length,
     archivedContexts: contexts.filter((c) => c.status === "archived").length,
     totalReceipts: receipts.length,
-    cachedChainBytes: mode === "live" ? 5_120_000 : 2_450_800,
+    cachedChainBytes: contexts.length > 0 ? 5_120_000 : 0,
   };
 
   return (

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { PageShell } from "@/components/layout/page-shell";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -159,6 +159,23 @@ export function DisclosuresPage() {
 
           {/* Tab 1: Prepare Disclosure */}
           <TabsContent value="prepare" className="flex flex-col gap-6">
+            {contexts.length === 0 ? (
+              <Card className="flex flex-col items-center justify-center p-12 text-center">
+                <EmptyState
+                  title="No viewing contexts in vault"
+                  description="Import a testnet or regtest Unified Incoming Viewing Key (UIVK) before preparing disclosures or record snapshots."
+                  action={
+                    <Button asChild className="mt-4">
+                      <Link to="/app/import">
+                        <Share2 className="size-4" />
+                        Import viewing key
+                      </Link>
+                    </Button>
+                  }
+                />
+              </Card>
+            ) : (
+              <>
             {exportedStatus && (
               <Alert variant="success">
                 <CheckCircle2 className="size-4" />
@@ -406,6 +423,8 @@ export function DisclosuresPage() {
                 </Button>
               </CardFooter>
             </Card>
+              </>
+            )}
           </TabsContent>
 
           {/* Tab 2: Recipient Inspection Workflow */}

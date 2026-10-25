@@ -68,61 +68,82 @@ export function ComparePage() {
           description="Evaluate capability overlap, receiver scope differences, and duplicate receipts before sharing viewing access."
         />
 
-        {/* Selection Cards */}
-        <div className="grid gap-6 md:grid-cols-2">
-          {/* Context A Selection */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Primary Context (A)</CardTitle>
-              <CardDescription>Select the first viewing capability to compare</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <select
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                value={contextAId}
-                onChange={(e) => setContextAId(e.target.value)}
-              >
-                {contexts.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label} ({c.network} · {c.supportedPools.join("+")})
-                  </option>
-                ))}
-              </select>
-            </CardContent>
+        {contexts.length < 2 ? (
+          <Card className="flex flex-col items-center justify-center p-12 text-center">
+            <EmptyState
+              title={contexts.length === 0 ? "No viewing contexts in vault" : "Second context required"}
+              description={
+                contexts.length === 0
+                  ? "Import viewing keys to evaluate capability overlap and shared receivers."
+                  : "Comparison requires at least two viewing contexts. Import another incoming viewing key to run side-by-side capability analysis."
+              }
+              action={
+                <Button asChild className="mt-4">
+                  <Link to="/app/import">
+                    <Layers className="size-4" />
+                    Import incoming viewing key
+                  </Link>
+                </Button>
+              }
+            />
           </Card>
+        ) : (
+          <>
+            {/* Selection Cards */}
+            <div className="grid gap-6 md:grid-cols-2">
+              {/* Context A Selection */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Primary Context (A)</CardTitle>
+                  <CardDescription>Select the first viewing capability to compare</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <select
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    value={contextAId}
+                    onChange={(e) => setContextAId(e.target.value)}
+                  >
+                    {contexts.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label} ({c.network} · {c.supportedPools.join("+")})
+                      </option>
+                    ))}
+                  </select>
+                </CardContent>
+              </Card>
 
-          {/* Context B Selection */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Comparison Context (B)</CardTitle>
-              <CardDescription>Select the second viewing capability to compare against</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <select
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                value={contextBId}
-                onChange={(e) => setContextBId(e.target.value)}
-              >
-                <option value="">-- Choose a context --</option>
-                {contexts.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label} ({c.network} · {c.supportedPools.join("+")})
-                  </option>
-                ))}
-              </select>
-            </CardContent>
-          </Card>
-        </div>
+              {/* Context B Selection */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Comparison Context (B)</CardTitle>
+                  <CardDescription>Select the second viewing capability to compare against</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <select
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    value={contextBId}
+                    onChange={(e) => setContextBId(e.target.value)}
+                  >
+                    <option value="">-- Choose a context --</option>
+                    {contexts.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label} ({c.network} · {c.supportedPools.join("+")})
+                      </option>
+                    ))}
+                  </select>
+                </CardContent>
+              </Card>
+            </div>
 
-        {/* Comparison Evaluation State */}
-        {!contextA || !contextB ? (
-          <EmptyState
-            title="Incomplete comparison selection"
-            description="Please choose two contexts above to run side-by-side capability analysis."
-            size="compact"
-          />
-        ) : isSame ? (
-          <Alert variant="info">
+            {/* Comparison Evaluation State */}
+            {!contextA || !contextB ? (
+              <EmptyState
+                title="Incomplete comparison selection"
+                description="Please choose two contexts above to run side-by-side capability analysis."
+                size="compact"
+              />
+            ) : isSame ? (
+              <Alert variant="info">
             <AlertTriangle className="size-4" />
             <AlertTitle>Identical Context Selected</AlertTitle>
             <AlertDescription>
@@ -294,6 +315,8 @@ export function ComparePage() {
               </Card>
             )}
           </div>
+        )}
+          </>
         )}
       </div>
     </WorkspaceGate>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { PageShell } from "@/components/layout/page-shell";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -47,6 +47,8 @@ export function SettingsPage() {
   const [recoveryPassphrase, setRecoveryPassphrase] = useState("vinca-recovery-key");
   const [importPassphrase, setImportPassphrase] = useState("");
   const [restoreMessage, setRestoreMessage] = useState<string | null>(null);
+  const [selectedBackupFileName, setSelectedBackupFileName] = useState<string | null>(null);
+  const backupFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleExportRecovery = async () => {
     try {
@@ -68,20 +70,32 @@ export function SettingsPage() {
     }
   };
 
-  const handleImportRecovery = async () => {
+  const processBackupFile = async (file: File) => {
     try {
-      // Build a restore sample bundle or load from user
-      const sampleBundle = await exportRecoveryBackup(importPassphrase || recoveryPassphrase);
-      const result = await importRecoveryBackup(sampleBundle, importPassphrase || recoveryPassphrase);
+      setSelectedBackupFileName(file.name);
+      const rawText = await file.text();
+      const parsedBundle = JSON.parse(rawText);
+      const result = await importRecoveryBackup(parsedBundle, importPassphrase || recoveryPassphrase);
       setRestoreMessage(
-        `Restored ${result.restoredContextsCount} contexts and ${result.restoredReceiptsCount} receipts. Stale coverage warning: ${result.staleCoverageWarning ? "active" : "none"}.`,
+        `Restored ${result.restoredContextsCount} contexts and ${result.restoredReceiptsCount} receipts from ${file.name}. Stale coverage warning: ${result.staleCoverageWarning ? "active" : "none"}.`,
       );
       setRecoveryImportSuccess(true);
       setTimeout(() => setRecoveryImportSuccess(false), 8000);
     } catch {
-      setRestoreMessage("Recovery restore failed: incorrect passphrase or corrupted file.");
+      setRestoreMessage("Recovery restore failed: invalid backup file or incorrect passphrase.");
       setRecoveryImportSuccess(true);
     }
+  };
+
+  const handleBackupFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      void processBackupFile(file);
+    }
+  };
+
+  const handleImportRecovery = () => {
+    backupFileInputRef.current?.click();
   };
 
   const handleConfirmReset = () => {
@@ -207,6 +221,13 @@ export function SettingsPage() {
                 <p className="text-xs text-muted-foreground">
                   Restore contexts and receipts from a previously exported recovery backup.
                 </p>
+                <input
+                  type="file"
+                  ref={backupFileInputRef}
+                  onChange={handleBackupFileChange}
+                  accept=".json"
+                  className="hidden"
+                />
                 <Field
                   label="Backup File Secret"
                   help="Passphrase chosen when the backup was created."
@@ -218,6 +239,11 @@ export function SettingsPage() {
                     onChange={(e) => setImportPassphrase(e.target.value)}
                   />
                 </Field>
+                {selectedBackupFileName && (
+                  <p className="text-xs text-primary font-medium">
+                    Loaded: {selectedBackupFileName}
+                  </p>
+                )}
                 <Button variant="outline" onClick={handleImportRecovery} className="w-full">
                   <Upload className="size-4" />
                   Select & restore recovery file
@@ -269,7 +295,7 @@ export function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="text-xs leading-relaxed text-muted-foreground">
-              Resetting will clear your IndexedDB vault and restore initial presentation fixtures. This cannot be undone.
+              Resetting will clear your IndexedDB vault and return the workspace to a fresh state. This cannot be undone.
             </CardContent>
             <CardFooter className="border-t border-border pt-4">
               <Button
@@ -289,10 +315,10 @@ export function SettingsPage() {
             <DialogHeader>
               <div className="flex items-center gap-2 text-destructive">
                 <AlertTriangle className="size-5" />
-                <DialogTitle>Reset Workspace to Sample State?</DialogTitle>
+                <DialogTitle>Reset Local Workspace?</DialogTitle>
               </div>
               <DialogDescription>
-                This will reset your local session, erase any added contexts or requested memos, and restore default presentation fixtures.
+                This will reset your local session, erase all added contexts and decrypted receipts, and clear the local IndexedDB vault.
               </DialogDescription>
             </DialogHeader>
 

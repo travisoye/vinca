@@ -1,4 +1,4 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { Link, Navigate, Route, Routes } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { AppLayout, PublicLayout } from "@/components/layout/layouts";
 import { LandingPage } from "@/routes/landing";
@@ -33,6 +33,7 @@ function AppRoutes() {
       <Route path="/app" element={<AppLayout />}>
         <Route index element={<AppDashboardPage />} />
         <Route path="import" element={<AppImportPage />} />
+        <Route path="contexts" element={<Navigate to="/app" replace />} />
         <Route path="contexts/:contextId" element={<ContextDetailPage />} />
         <Route path="compare" element={<ComparePage />} />
         <Route path="disclosures" element={<DisclosuresPage />} />

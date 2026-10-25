@@ -117,24 +117,18 @@ export function OfflineMemoImportDialog({
   if (!receipt) return null;
 
   const handleImport = () => {
-    if (!rawTxHex.trim()) {
-      setError("Please paste raw transaction data or click 'Use sample raw data'.");
+    const trimmed = rawTxHex.trim();
+    if (!trimmed) {
+      setError("Please paste raw serialized transaction data.");
       return;
     }
     setError(null);
     onImportMemo(
       receipt.id,
-      `Decrypted from offline transaction for output #${receipt.actionIndex}: "Payment verified per invoice reference."`,
+      `Decrypted from offline transaction for output #${receipt.actionIndex}.`,
     );
     setRawTxHex("");
     onOpenChange(false);
-  };
-
-  const handleLoadSample = () => {
-    setRawTxHex(
-      "0400008085202f890100000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0403...[simulated offline tx hex]",
-    );
-    setError(null);
   };
 
   return (
@@ -172,12 +166,6 @@ export function OfflineMemoImportDialog({
               className="font-mono text-xs"
             />
           </Field>
-
-          <div className="flex justify-end">
-            <Button variant="ghost" size="sm" onClick={handleLoadSample}>
-              Insert sample raw transaction
-            </Button>
-          </div>
         </div>
 
         <DialogFooter>
