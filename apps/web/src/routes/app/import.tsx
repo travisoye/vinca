@@ -54,7 +54,7 @@ export function AppImportPage() {
       let extractedKey = rawText.trim();
 
       // If the file is JSON, attempt to extract known key fields
-      if (file.name.endsWith(".json") || extractedKey.startsWith("{")) {
+      if (file.name.endsWith(".json") || file.name.endsWith(".key") || extractedKey.startsWith("{")) {
         try {
           const parsed = JSON.parse(extractedKey);
           if (typeof parsed === "object" && parsed !== null) {
@@ -64,6 +64,16 @@ export function AppImportPage() {
               parsed.viewing_key ||
               parsed.key ||
               extractedKey;
+
+            if (parsed.network === "regtest" || parsed.network === "testnet") {
+              setNetwork(parsed.network);
+            }
+            if (parsed.birthdayHeight) {
+              setBirthdayHeight(String(parsed.birthdayHeight));
+            }
+            if (parsed.label) {
+              setContextLabel(parsed.label);
+            }
           }
         } catch {
           // Fall back to plain text
@@ -72,12 +82,16 @@ export function AppImportPage() {
 
       setKeyString(extractedKey);
 
-      // Auto-detect network from key prefix
+      // Auto-detect network and appropriate birthday from key prefix if not already set
       const lower = extractedKey.toLowerCase();
       if (lower.startsWith("uviewtest")) {
         setNetwork("testnet");
+        if (birthdayHeight === "201") {
+          setBirthdayHeight("2500000");
+        }
       } else if (lower.startsWith("uviewregtest")) {
         setNetwork("regtest");
+        setBirthdayHeight("201");
       }
 
       // Auto-populate friendly label if not set
