@@ -125,9 +125,9 @@ async fn main() -> anyhow::Result<()> {
 
 fn load_config(path: &str) -> anyhow::Result<RelayConfig> {
     // Build from file + environment overrides.
-    let builder = config::Config::builder()
-        .add_source(config::File::with_name(path).required(false))
-        .add_source(config::Environment::with_prefix("RELAY").separator("__"))
+    let builder = ::config::Config::builder()
+        .add_source(::config::File::with_name(path).required(false))
+        .add_source(::config::Environment::with_prefix("RELAY").separator("__"))
         // Allow PORT and WEB_ORIGIN as top-level env vars for Render/Vercel compatibility.
         .set_override_option("port", std::env::var("PORT").ok())?
         .set_override_option(

@@ -33,17 +33,17 @@ pub mod transaction;
 use std::time::Duration;
 
 use axum::{
+    extract::DefaultBodyLimit,
     Router,
     routing::get,
 };
 use tower::ServiceBuilder;
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
-    limit::RequestBodyLimitLayer,
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
-use http::HeaderValue;
+use http::{HeaderValue, StatusCode};
 
 use crate::AppState;
 
@@ -70,8 +70,11 @@ pub fn build_router(state: AppState) -> Router {
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
-                .layer(TimeoutLayer::new(Duration::from_secs(timeout_secs + 5)))
-                .layer(RequestBodyLimitLayer::new(max_request_bytes))
+                .layer(TimeoutLayer::with_status_code(
+                    StatusCode::REQUEST_TIMEOUT,
+                    Duration::from_secs(timeout_secs + 5),
+                ))
+                .layer(DefaultBodyLimit::max(max_request_bytes))
                 .layer(cors),
         )
         .with_state(state)
