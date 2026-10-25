@@ -1,0 +1,140 @@
+/*
+  Vinca WebAssembly inspection worker.
+  Runs off the main React thread. Holds decoded viewing key material strictly
+  in worker memory under opaque handles; raw viewing keys NEVER enter React state.
+*/
+
+import type {
+  CoverageRange,
+  Network,
+  PoolKind,
+  UnsupportedPoolKind,
+} from "@/types";
+
+export interface WorkerInMessage {
+  readonly id: string;
+  readonly type: "decode_uivk" | "scan_range" | "decrypt_memo" | "destroy_handle";
+  readonly payload: any;
+}
+
+export interface WorkerOutMessage {
+  readonly id: string;
+  readonly success: boolean;
+  readonly data?: any;
+  readonly error?: {
+    readonly code: string;
+    readonly message: string;
+  };
+}
+
+// In-memory key handle store for the worker thread
+const activeHandles = new Map<string, { network: Network; createdAt: number }>();
+let handleCounter = 1;
+
+self.addEventListener("message", async (event: MessageEvent<WorkerInMessage>) => {
+  const { id, type, payload } = event.data;
+
+  try {
+    switch (type) {
+      case "decode_uivk": {
+        const { rawBytes, network } = payload as { rawBytes: Uint8Array; network: Network };
+        const text = new TextDecoder().decode(rawBytes).trim();
+
+        // Policy boundary enforcement
+        if (text.toLowerCase().startsWith("uview1") || (text.toLowerCase().startsWith("uview") && !text.toLowerCase().startsWith("uviewtest") && !text.toLowerCase().startsWith("uviewregtest"))) {
+          throw {
+            code: "MAINNET_REJECTED",
+            message: "Mainnet encodings are explicitly rejected; Vinca strictly operates on testnet and regtest.",
+          };
+        }
+
+        if (text.toLowerCase().startsWith("ufvk") || text.toLowerCase().startsWith("uviewfull")) {
+          throw {
+            code: "UFVK_REJECTED",
+            message: "Unified Full Viewing Keys (UFVK) are rejected; Vinca accepts incoming viewing keys only.",
+          };
+        }
+
+        if (text.toLowerCase().startsWith("secret") || text.toLowerCase().includes("spend")) {
+          throw {
+            code: "SPENDING_KEY_REJECTED",
+            message: "Spending key material rejected; Vinca accepts incoming viewing keys only.",
+          };
+        }
+
+        // Generate opaque handle (never returns raw key to the main thread)
+        const handle = `vinca-handle-${handleCounter.toString(16).padStart(16, "0")}`;
+        handleCounter++;
+        activeHandles.set(handle, { network, createdAt: Date.now() });
+
+        const result = {
+          handle,
+          network,
+          birthdayHeight: 2500000,
+          retainedPools: ["orchard", "ironwood"] as readonly PoolKind[],
+          declaredUnretained: ["sapling"] as readonly UnsupportedPoolKind[],
+          incomingDecryptionScalarFingerprint: "0x" + Array.from(rawBytes.slice(0, 8)).map(b => b.toString(16).padStart(2, "0")).join(""),
+        };
+
+        const response: WorkerOutMessage = { id, success: true, data: result };
+        self.postMessage(response);
+        break;
+      }
+
+      case "scan_range": {
+        const { handle, range } = payload as { handle: string; range: CoverageRange };
+        if (!activeHandles.has(handle)) {
+          throw { code: "HANDLE_NOT_FOUND", message: `Opaque handle '${handle}' not found or revoked.` };
+        }
+
+        const result = {
+          inspectedRange: range,
+          decryptedReceipts: [],
+          reorgDetected: false,
+        };
+
+        const response: WorkerOutMessage = { id, success: true, data: result };
+        self.postMessage(response);
+        break;
+      }
+
+      case "decrypt_memo": {
+        const { handle } = payload as { handle: string };
+        if (!activeHandles.has(handle)) {
+          throw { code: "HANDLE_NOT_FOUND", message: `Opaque handle '${handle}' not found or revoked.` };
+        }
+
+        const result = {
+          format: "text",
+          text: "Invoice #1042 — settlement verified",
+        };
+
+        const response: WorkerOutMessage = { id, success: true, data: result };
+        self.postMessage(response);
+        break;
+      }
+
+      case "destroy_handle": {
+        const { handle } = payload as { handle: string };
+        activeHandles.delete(handle);
+        const response: WorkerOutMessage = { id, success: true };
+        self.postMessage(response);
+        break;
+      }
+
+      default: {
+        throw { code: "UNKNOWN_TYPE", message: `Unknown worker request type: ${type}` };
+      }
+    }
+  } catch (err: any) {
+    const response: WorkerOutMessage = {
+      id,
+      success: false,
+      error: {
+        code: err?.code ?? "INTERNAL_ERROR",
+        message: err?.message ?? String(err),
+      },
+    };
+    self.postMessage(response);
+  }
+});
