@@ -2,7 +2,10 @@
 /target/
 
 # Project planning and implementation documents
-/implementation docs/
+/implementation docs/asset-licensing.md
+/implementation docs/prd.md
+/implementation docs/projectcontext.md
+/implementation docs/ui-handoff-checklist.md
 
 # JavaScript dependencies and generated output
 node_modules/
