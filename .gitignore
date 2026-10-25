@@ -1,0 +1,31 @@
+# Rust build artifacts
+/target/
+
+# JavaScript dependencies and generated output
+node_modules/
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Local environment files; keep safe templates trackable
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Locally generated relay configuration (use relay.toml.example as a template)
+/services/chain-relay/relay.toml
+
+# Package-manager debug logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local IDE settings
+.idea/

@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    "crates/vinca-core",
+    "crates/vinca-wasm",
+    "services/chain-relay",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+authors = ["Vinca Contributors"]
+repository = "https://github.com/vinca/vinca"
+
+[workspace.dependencies]
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+thiserror = { version = "2.0", default-features = false }
+zeroize = { version = "1.8", default-features = false, features = ["alloc", "zeroize_derive"] }
+bech32 = "0.11"
+subtle = "2.6"
+rand_core = "0.6"
+sha2 = "0.10"
+blake2b_simd = "1.0"
+hex = "0.4"
+anyhow = "1.0"
