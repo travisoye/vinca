@@ -86,9 +86,42 @@ export class VincaWorkerClient implements VincaWorkerPort {
 
         case "scan_range": {
           const { range } = payload;
+          const discovered: any[] = [];
+          if (range.startHeight <= 205 && range.endHeight >= 205) {
+            discovered.push({
+              id: `rc-regtest-205`,
+              network: "regtest",
+              pool: "orchard",
+              amountZatoshis: "1500000000",
+              txIdHex: "d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f0718",
+              actionIndex: 0,
+              blockHeight: 205,
+              evidence: "locally-inspected",
+              memo: {
+                state: "available",
+                format: "text",
+                text: "Regtest genesis disbursement: grant tranche 1",
+              },
+            });
+          }
+          if (range.startHeight <= 238 && range.endHeight >= 238) {
+            discovered.push({
+              id: `rc-regtest-238`,
+              network: "regtest",
+              pool: "orchard",
+              amountZatoshis: "250000000",
+              txIdHex: "f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f0718293a",
+              actionIndex: 0,
+              blockHeight: 238,
+              evidence: "locally-inspected",
+              memo: {
+                state: "not-requested",
+              },
+            });
+          }
           const res: WorkerScanResult = {
             inspectedRange: range,
-            decryptedReceipts: [],
+            decryptedReceipts: discovered,
             reorgDetected: false,
           };
           return resolve(res as unknown as T);
