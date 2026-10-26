@@ -8,7 +8,6 @@
     "build:wasm": "wasm-pack build ../../crates/vinca-wasm --target web --out-dir ../../apps/web/src/wasm --out-name vinca_wasm --release",
     "predev": "npm run build:wasm",
     "dev": "vite",
-    "prebuild": "npm run build:wasm",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

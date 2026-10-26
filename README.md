@@ -122,10 +122,10 @@ Vinca is designed according to strict cryptographic and disclosure realities:
 ### Prerequisites
 
 - **Node.js:** v20.18.0 or newer
-- **Rust Toolchain:** 1.82.0 or newer (with `wasm32-unknown-unknown` target for WASM)
+- **Rust Toolchain:** 1.89.0 or newer (only needed to run Rust tests or regenerate the committed WASM package)
 
 ```bash
-# Add WebAssembly target
+# Add WebAssembly target before regenerating the committed WASM package
 rustup target add wasm32-unknown-unknown
 ```
 
@@ -136,6 +136,12 @@ cd apps/web
 npm install
 npm run dev
 ```
+
+The generated Rust/WASM package is committed under `apps/web/src/wasm`, so
+Vercel's frontend build does not need Rust, rustup, or the WebAssembly target.
+When Rust WASM sources change, regenerate it from `apps/web` using
+`npm run build:wasm` and include the updated generated files in that change.
+`npm run dev` regenerates the package automatically for local development.
 
 Visit `http://localhost:5173` in your browser.
 

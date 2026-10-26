@@ -1,0 +1,6 @@
+*
+!.gitignore
+!vinca_wasm.js
+!vinca_wasm.d.ts
+!vinca_wasm_bg.wasm
+!vinca_wasm_bg.wasm.d.ts
