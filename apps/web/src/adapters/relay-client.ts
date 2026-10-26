@@ -35,7 +35,7 @@ export class RelayClient implements VincaRelayPort {
       typeof import.meta !== "undefined" && import.meta.env
         ? (import.meta.env.VITE_RELAY_URL as string | undefined)
         : undefined;
-    this.baseUrl = (config?.baseUrl ?? envUrl ?? "http://localhost:3000").replace(/\/+$/, "");
+    this.baseUrl = (config?.baseUrl ?? envUrl ?? "https://vinca-relay.onrender.com").replace(/\/+$/, "");
     this.timeoutMs = config?.timeoutMs ?? 15_000;
   }
 

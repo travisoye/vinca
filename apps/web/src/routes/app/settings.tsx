@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PageShell } from "@/components/layout/page-shell";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -23,12 +23,14 @@ import {
 } from "@/components/ui/dialog";
 import { WorkspaceGate } from "@/components/dashboard/workspace-gate";
 import { useWorkspace } from "@/context/workspace-context";
+import { getRelayClient } from "@/adapters/relay-client";
 import {
   AlertTriangle,
   CheckCircle2,
   Database,
   Download,
   HardDrive,
+  RefreshCw,
   Server,
   Trash2,
   Upload,
@@ -49,6 +51,42 @@ export function SettingsPage() {
   const [restoreMessage, setRestoreMessage] = useState<string | null>(null);
   const [selectedBackupFileName, setSelectedBackupFileName] = useState<string | null>(null);
   const backupFileInputRef = useRef<HTMLInputElement>(null);
+
+  const [relayReport, setRelayReport] = useState<{
+    status: string;
+    upstream: string;
+    tipHeight: number | null;
+    latencyMs: number | null;
+    isChecking: boolean;
+  }>({
+    status: "checking",
+    upstream: "https://testnet.zec.rocks:443",
+    tipHeight: null,
+    latencyMs: null,
+    isChecking: false,
+  });
+
+  const checkRelayConnection = useCallback(async () => {
+    setRelayReport((prev) => ({ ...prev, isChecking: true }));
+    const relay = getRelayClient();
+    try {
+      const health = await relay.checkHealth();
+      const tip = await relay.getTipHeight("testnet").catch(() => null);
+      setRelayReport({
+        status: health.status === "connected" ? "connected" : health.status === "degraded" ? "degraded" : "offline",
+        upstream: "https://testnet.zec.rocks:443",
+        tipHeight: tip,
+        latencyMs: health.latencyMs,
+        isChecking: false,
+      });
+    } catch {
+      setRelayReport((prev) => ({ ...prev, status: "offline", isChecking: false }));
+    }
+  }, []);
+
+  useEffect(() => {
+    void checkRelayConnection();
+  }, [checkRelayConnection]);
 
   const handleExportRecovery = async () => {
     try {
@@ -144,6 +182,73 @@ export function SettingsPage() {
               <div className="flex justify-between pt-1 text-xs text-muted-foreground">
                 <span>Storage Engine:</span>
                 <span className="font-medium text-foreground">Browser IndexedDB (AES-256-GCM encrypted)</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Public Chain Relay Diagnostics */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Server className="size-5 text-primary" />
+                  <CardTitle className="text-base">Public Chain Relay</CardTitle>
+                </div>
+                <Badge
+                  variant={
+                    relayReport.status === "connected"
+                      ? "secondary"
+                      : relayReport.status === "degraded"
+                      ? "outline"
+                      : "muted"
+                  }
+                >
+                  {relayReport.status === "connected"
+                    ? "Live Connected"
+                    : relayReport.status === "degraded"
+                    ? "Degraded"
+                    : relayReport.status === "checking"
+                    ? "Checking..."
+                    : "Offline Fallback"}
+                </Badge>
+              </div>
+              <CardDescription>
+                Public unauthenticated relay connection to Zcash testnet
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="flex justify-between border-b border-border pb-2">
+                <span className="text-muted-foreground">Relay Service:</span>
+                <span className="font-mono text-xs font-medium">https://vinca-relay.onrender.com</span>
+              </div>
+              <div className="flex justify-between border-b border-border pb-2">
+                <span className="text-muted-foreground">Upstream Node:</span>
+                <span className="font-mono text-xs font-medium">{relayReport.upstream}</span>
+              </div>
+              <div className="flex justify-between border-b border-border pb-2">
+                <span className="text-muted-foreground">Network & Pools:</span>
+                <span className="font-medium">Testnet (Orchard, Ironwood)</span>
+              </div>
+              <div className="flex justify-between border-b border-border pb-2">
+                <span className="text-muted-foreground">Current Testnet Tip:</span>
+                <span className="font-mono text-xs font-semibold text-primary">
+                  {relayReport.tipHeight !== null ? `#${relayReport.tipHeight.toLocaleString()}` : "Querying..."}
+                </span>
+              </div>
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-xs text-muted-foreground">
+                  {relayReport.latencyMs !== null ? `Latency: ${relayReport.latencyMs}ms` : "Zero keys or addresses transmitted"}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={relayReport.isChecking}
+                  onClick={checkRelayConnection}
+                  className="h-7 text-xs"
+                >
+                  <RefreshCw className={`mr-1 size-3.5 ${relayReport.isChecking ? "animate-spin" : ""}`} />
+                  Test relay
+                </Button>
               </div>
             </CardContent>
           </Card>

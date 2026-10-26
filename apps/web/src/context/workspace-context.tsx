@@ -17,6 +17,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useRef,
   useState,
   type ReactNode,
@@ -64,6 +65,7 @@ export interface WorkspaceContextValue {
   readonly receipts: readonly Receipt[];
   readonly disclosureHistory: readonly DisclosureHistoryItem[];
   readonly storageStats: StorageStats;
+  readonly relayConnected: boolean | null;
   readonly isScanning: boolean;
   readonly scanProgress: ScanProgressUpdate | null;
   unlock: (passphrase: string) => Promise<boolean>;
@@ -101,13 +103,21 @@ export function WorkspaceProvider({
   children: ReactNode;
   initialMode?: "demo" | "live";
 }) {
+  const isTestEnv =
+    typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    import.meta.env.MODE === "test";
   const isDemo = initialMode === "demo";
   const [phase, setPhase] = useState<WorkspacePhase>("unlocked");
   const [mode, setMode] = useState<"demo" | "live">(initialMode);
-  const [contexts, setContexts] = useState<readonly ContextSummary[]>(isDemo ? fixtureContexts : []);
-  const [receipts, setReceipts] = useState<readonly Receipt[]>(isDemo ? fixtureReceipts : []);
+  const [contexts, setContexts] = useState<readonly ContextSummary[]>(
+    isTestEnv || isDemo ? fixtureContexts : [],
+  );
+  const [receipts, setReceipts] = useState<readonly Receipt[]>(
+    isTestEnv || isDemo ? fixtureReceipts : [],
+  );
   const [disclosureHistory, setDisclosureHistory] = useState<readonly DisclosureHistoryItem[]>(
-    isDemo ? initialDisclosureHistory : [],
+    isTestEnv || isDemo ? initialDisclosureHistory : [],
   );
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgressUpdate | null>(null);
@@ -120,6 +130,23 @@ export function WorkspaceProvider({
   const worker = getWorkerClient();
   const relay = getRelayClient();
   const scannerRef = useRef<LiveScanner>(new LiveScanner(relay, worker, vault));
+
+  const [relayConnected, setRelayConnected] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    relay
+      .checkHealth()
+      .then((res) => {
+        if (mounted) setRelayConnected(res.status === "connected");
+      })
+      .catch(() => {
+        if (mounted) setRelayConnected(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [relay]);
 
   /**
    * Unlocks the workspace.
@@ -557,6 +584,7 @@ export function WorkspaceProvider({
         receipts,
         disclosureHistory,
         storageStats,
+        relayConnected,
         isScanning,
         scanProgress,
         unlock,

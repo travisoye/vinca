@@ -244,7 +244,7 @@ export function ContextDetailPage() {
               <div>
                 <span className="text-xs text-muted-foreground">Total Incoming: </span>
                 <span className="font-mono font-bold text-primary">
-                  {formatZecFromZatoshis(totalZatoshis)} ZEC
+                  {formatZecFromZatoshis(totalZatoshis)} ZEC ({totalZatoshis} zatoshis)
                 </span>
               </div>
               <div>

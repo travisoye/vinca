@@ -1,6 +1,8 @@
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { LogoMark } from "@/components/logo";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { useWorkspace } from "@/context/workspace-context";
 
 const publicNavLinks = [
   { label: "Docs", href: "/docs" },
@@ -133,6 +135,7 @@ const dashboardNav = [
 ] as const;
 
 function AppLayout() {
+  const { phase, mode, relayConnected } = useWorkspace();
   return (
     <div className="flex min-h-screen flex-col bg-muted/30">
       <a href="#main-content" className="skip-link">Skip to content</a>
@@ -142,6 +145,32 @@ function AppLayout() {
             <Link to="/" className="inline-flex min-h-11 items-center gap-3 rounded-full">
               <LogoMark className="size-8 text-foreground" />
               <span className="text-lg font-semibold tracking-tight">Vinca</span>
+            </Link>
+            <Badge variant={phase === "unlocked" ? "secondary" : "muted"}>
+              Workspace: {phase} ({mode})
+            </Badge>
+            <Link
+              to="/app/settings"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              title="Click to view relay diagnostics in Settings"
+            >
+              <span
+                className={`size-2 rounded-full ${
+                  relayConnected === true
+                    ? "bg-emerald-500 animate-pulse"
+                    : relayConnected === false
+                    ? "bg-amber-500"
+                    : "bg-muted-foreground"
+                }`}
+              />
+              <span>
+                Testnet Relay:{" "}
+                {relayConnected === true
+                  ? "Live"
+                  : relayConnected === false
+                  ? "Offline"
+                  : "Connecting..."}
+              </span>
             </Link>
           </div>
           <nav aria-label="Dashboard" className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
