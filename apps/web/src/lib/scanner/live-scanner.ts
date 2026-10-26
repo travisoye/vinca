@@ -70,7 +70,12 @@ export class LiveScanner {
     options?: ScanOptions,
   ): Promise<ScanResult> {
     const tipHeight = options?.targetHeight ?? (await this.relay.getTipHeight(context.network));
-    const startHeight = (context.coverage.lastScannedHeight ?? context.birthdayHeight - 1) + 1;
+    let startHeight = (context.coverage.lastScannedHeight ?? context.birthdayHeight - 1) + 1;
+
+    // If context has 0 receipts recorded and is already marked at tip, allow a rescan from birthday
+    if (startHeight > tipHeight && existingReceipts.filter((r) => r.contextId === context.id).length === 0) {
+      startHeight = context.birthdayHeight;
+    }
 
     if (startHeight > tipHeight) {
       // Already fully synchronized
@@ -89,7 +94,7 @@ export class LiveScanner {
       };
     }
 
-    const chunkSize = Math.min(options?.chunkSize ?? 500, 2000);
+    const chunkSize = Math.min(options?.chunkSize ?? 2000, 5000);
     let currentHeight = startHeight;
     let accumulatedReceipts: Receipt[] = [...existingReceipts];
     let newDiscoveredReceipts: Receipt[] = [];

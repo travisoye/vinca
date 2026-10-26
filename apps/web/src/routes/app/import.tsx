@@ -35,7 +35,7 @@ export function AppImportPage() {
   const [keyString, setKeyString] = useState("");
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [network, setNetwork] = useState<Network>("testnet");
-  const [birthdayHeight, setBirthdayHeight] = useState("2500000");
+  const [birthdayHeight, setBirthdayHeight] = useState("2619000");
   const [contextLabel, setContextLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
@@ -86,7 +86,7 @@ export function AppImportPage() {
       if (lower.startsWith("uviewtest")) {
         setNetwork("testnet");
         if (birthdayHeight === "201") {
-          setBirthdayHeight("2500000");
+          setBirthdayHeight("2619000");
         }
       } else if (lower.startsWith("uviewregtest")) {
         setNetwork("regtest");
@@ -304,12 +304,12 @@ export function AppImportPage() {
                   </select>
                 </Field>
 
-                <Field label="Scan Birthday Height" help="Orchard activation height or creation block">
+                <Field label="Scan Birthday Height" help="Recent testnet block (~2,619,000 for fast scanning) or wallet creation block">
                   <Input
                     type="number"
                     value={birthdayHeight}
                     onChange={(e) => setBirthdayHeight(e.target.value)}
-                    placeholder="2500000"
+                    placeholder="2619000"
                     min="1"
                   />
                 </Field>
