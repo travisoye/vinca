@@ -80,8 +80,7 @@ export interface WorkspaceContextValue {
   unarchiveContext: (id: string) => Promise<void>;
   deleteContext: (id: string) => Promise<void>;
   scanContext: (contextId: string) => Promise<ScanResult>;
-  requestMemo: (receiptId: string) => Promise<void>;
-  importOfflineMemo: (receiptId: string, memoText: string) => Promise<void>;
+  requestMemo: (receiptId: string) => Promise<string>;
   recordDisclosure: (
     item: Omit<DisclosureHistoryItem, "id" | "createdAtUtc">,
   ) => DisclosureHistoryItem;
@@ -408,12 +407,16 @@ export function WorkspaceProvider({
    * On-demand memo retrieval with user privacy confirmation.
    */
   const requestMemo = useCallback(
-    async (receiptId: string): Promise<void> => {
+    async (receiptId: string): Promise<string> => {
       const receipt = receipts.find((r) => r.id === receiptId);
-      if (!receipt) return;
+      if (!receipt) {
+        throw new Error("The selected receipt is no longer available in this workspace.");
+      }
 
       const context = contexts.find((c) => c.id === receipt.contextId);
-      if (!context) return;
+      if (!context) {
+        throw new Error("The context for this receipt is no longer available.");
+      }
 
       const handle = activeHandlesRef.current.get(context.id);
       if (!handle) {
@@ -426,36 +429,16 @@ export function WorkspaceProvider({
         receipt,
       );
 
-      setReceipts((prev) =>
-        prev.map((r) => (r.id === receiptId ? updatedReceipt : r)),
-      );
-    },
-    [contexts, receipts],
-  );
-
-  /**
-   * Imports an offline transaction memo without relay query.
-   */
-  const importOfflineMemo = useCallback(
-    async (receiptId: string, memoText: string): Promise<void> => {
-      const updatedReceipt: Receipt = {
-        ...receipts.find((r) => r.id === receiptId)!,
-        memo: {
-          state: "available",
-          format: "text",
-          text: memoText.trim() || "Offline transaction parsed without relay query.",
-        },
-      };
-
-      if (mode === "live") {
-        await vault.saveEncryptedReceipt(updatedReceipt).catch(() => { });
+      if (updatedReceipt.memo.state !== "available") {
+        throw new Error("The worker did not return a decrypted memo.");
       }
 
       setReceipts((prev) =>
         prev.map((r) => (r.id === receiptId ? updatedReceipt : r)),
       );
+      return updatedReceipt.memo.text;
     },
-    [mode, receipts, vault],
+    [contexts, receipts],
   );
 
   /**
@@ -580,7 +563,6 @@ export function WorkspaceProvider({
         deleteContext,
         scanContext,
         requestMemo,
-        importOfflineMemo,
         recordDisclosure,
         exportRecoveryBackup,
         importRecoveryBackup,

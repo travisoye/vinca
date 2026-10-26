@@ -1,8 +1,8 @@
 //! Unit tests for vinca-core protocol inspection logic.
-//! Written under validation freeze; execution remains deferred until Phase 9.
+//! Protocol inspection tests; memo decryption coverage is still in progress.
 
 use vinca_core::{
-    compare_orchard_keys, decode_uivk, decrypt_full_note_memo, encode_uivk_testnet,
+    compare_orchard_keys, decode_uivk, decrypt_transaction_memo, encode_uivk_testnet,
     inspect_compact_actions, validate_multi_receiver, validate_orchard_receiver,
     CompactAction, Network, OrchardRawReceiver, OverlapKind, PoolKind, RetainedOrchardKey,
     VincaError, MAX_UIVK_INPUT_BYTES,
@@ -171,22 +171,21 @@ fn test_compact_action_trial_decryption() {
 }
 
 #[test]
-fn test_on_demand_memo_decryption_fails_closed_until_tx_parser_exists() {
+fn test_on_demand_memo_decryption_rejects_malformed_transaction() {
     let retained = RetainedOrchardKey {
         dk: [0x01; 32],
         ivk: [0x02; 32],
     };
-    let epk = [0x03; 32];
-    let ciphertext = vec![0u8; 64];
-
-    let result = decrypt_full_note_memo(
+    let result = decrypt_transaction_memo(
         &retained,
-        &epk,
-        &ciphertext,
-        "0123456789abcdef".into(),
+        &[0],
+        &"00".repeat(32),
+        2_700_050,
+        Network::Testnet,
+        PoolKind::Orchard,
         0,
-        100_000_000,
+        "100000000",
     );
 
-    assert!(matches!(result, Err(VincaError::InspectionUnavailable(_))));
+    assert!(matches!(result, Err(VincaError::InvalidTransaction(_))));
 }

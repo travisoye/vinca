@@ -234,8 +234,8 @@ export class LiveScanner {
   }
 
   /**
-   * On-demand memo decryption:
-   * Fetches full transaction bytes from the relay and decrypts in the worker.
+   * On-demand memo request:
+   * Fetches full transaction bytes after consent, then decrypts in the worker.
    */
   async fetchAndDecryptMemo(
     context: ContextSummary,
@@ -249,7 +249,7 @@ export class LiveScanner {
     const memoResult = await this.worker.decryptMemo(
       handle,
       txBytes,
-      receipt.actionIndex,
+      receipt,
     );
 
     const updatedReceipt: Receipt = {
@@ -263,7 +263,7 @@ export class LiveScanner {
 
     // 3. Persist to vault
     if (this.vault) {
-      await this.vault.saveEncryptedReceipt(updatedReceipt).catch(() => {});
+      await this.vault.saveEncryptedReceipt(updatedReceipt);
     }
 
     return updatedReceipt;

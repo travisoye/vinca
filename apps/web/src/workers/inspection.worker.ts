@@ -45,8 +45,23 @@ interface ScannedReceipt {
   readonly pool: "orchard" | "ironwood";
 }
 
+type WasmMemoDecryptor = (
+  handle: string,
+  transactionBytes: Uint8Array,
+  expectedTxIdHex: string,
+  blockHeight: number,
+  network: string,
+  pool: string,
+  actionIndex: number,
+  expectedAmountZatoshis: string,
+) => string;
+
 const activeHandles = new Map<string, Network>();
 let wasmReady: Promise<unknown> | undefined;
+
+function isWasmMemoDecryptor(value: unknown): value is WasmMemoDecryptor {
+  return typeof value === "function";
+}
 
 function initializeWasm(): Promise<unknown> {
   wasmReady ??= init();
@@ -159,17 +174,66 @@ self.addEventListener("message", async (event: MessageEvent<WorkerInMessage>) =>
       }
 
       case "decrypt_memo": {
-        const { handle } = payload as { handle: string };
-        if (!activeHandles.has(handle)) {
+        const { handle, txBytes, receipt } = payload as {
+          handle: string;
+          txBytes: Uint8Array;
+          receipt: Receipt;
+        };
+        const network = activeHandles.get(handle);
+        if (!network) {
           throw {
             code: "HANDLE_NOT_FOUND",
             message: "The viewing key is not available in this worker session. Re-import the key to inspect.",
           };
         }
-        throw {
-          code: "INSPECTION_UNAVAILABLE",
-          message: "Memo decryption is unavailable until full transaction parsing is implemented.",
-        };
+        if (
+          !(txBytes instanceof Uint8Array) ||
+          !Number.isSafeInteger(receipt.actionIndex) ||
+          receipt.actionIndex < 0 ||
+          receipt.actionIndex > 0xffff_ffff ||
+          !Number.isSafeInteger(receipt.blockHeight) ||
+          receipt.blockHeight < 0 ||
+          receipt.blockHeight > 0xffff_ffff ||
+          !/^[0-9a-f]{64}$/i.test(receipt.txIdHex) ||
+          !/^\d+$/.test(receipt.amountZatoshis)
+        ) {
+          throw {
+            code: "INVALID_MEMO_REQUEST",
+            message: "The selected receipt metadata is invalid.",
+          };
+        }
+        if (receipt.network !== network) {
+          throw {
+            code: "NETWORK_MISMATCH",
+            message: "The selected receipt does not belong to this viewing-key network.",
+          };
+        }
+        const wasmModule = await import("../wasm/vinca_wasm");
+        const decryptMemo = Reflect.get(wasmModule, "decrypt_transaction_memo");
+        if (!isWasmMemoDecryptor(decryptMemo)) {
+          throw {
+            code: "INSPECTION_UNAVAILABLE",
+            message: "This WASM package does not include full-transaction memo decryption.",
+          };
+        }
+        const data = unwrapRustResponse<{
+          format: "text" | "arbitrary-bytes";
+          text: string;
+          rawBytesHex?: string;
+        }>(
+          decryptMemo(
+            handle,
+            txBytes,
+            receipt.txIdHex,
+            receipt.blockHeight,
+            receipt.network,
+            receipt.pool,
+            receipt.actionIndex,
+            receipt.amountZatoshis,
+          ),
+        );
+        self.postMessage({ id, success: true, data } satisfies WorkerOutMessage);
+        break;
       }
 
       case "destroy_handle": {

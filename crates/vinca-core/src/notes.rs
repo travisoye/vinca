@@ -13,15 +13,22 @@ use zcash_note_encryption::{try_compact_note_decryption, EphemeralKeyBytes};
 use crate::{
     errors::{Result, VincaError},
     types::{
-        CompactAction, CompactReceipt, DecryptedNote, PoolKind, RetainedOrchardKey,
-        ScannedReceipt,
+        CompactAction, CompactReceipt, DecryptedMemo, MemoFormat, Network, PoolKind,
+        RetainedOrchardKey, ScannedReceipt,
     },
+};
+use zcash_primitives::transaction::Transaction;
+use zcash_protocol::{
+    consensus::{BlockHeight, BranchId, TEST_NETWORK},
+    memo::{Memo, MemoBytes},
+    TxId,
 };
 
 pub const MAX_ACTIONS_PER_BLOCK: usize = 10_000;
 pub const MAX_MEMO_BYTES: usize = 512;
 pub const MAX_COMPACT_BLOCK_BYTES: usize = 10 * 1024 * 1024;
 pub const MAX_COMPACT_BLOCKS_PER_RANGE: u32 = 1_000;
+pub const MAX_TRANSACTION_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, PartialEq, Message)]
 struct CompactBlock {
@@ -230,32 +237,149 @@ pub fn inspect_compact_blocks(
     Ok(receipts)
 }
 
-/// Memo decryption remains unavailable until full transactions are parsed and
-/// their Orchard output ciphertexts are matched to the selected action.
-pub fn decrypt_full_note_memo(
-    _retained: &RetainedOrchardKey,
-    _ephemeral_key: &[u8; 32],
-    _ciphertext_memo: &[u8],
-    _nullifier_hex: String,
-    _output_index: u32,
-    _amount_zatoshis: u64,
-) -> Result<DecryptedNote> {
-    Err(VincaError::InspectionUnavailable(
-        "Full transaction memo decryption is not connected.".into(),
-    ))
+/// Parses and decrypts the selected action from a bounded transaction.
+pub fn decrypt_transaction_memo(
+    retained: &RetainedOrchardKey,
+    transaction_bytes: &[u8],
+    expected_tx_id_hex: &str,
+    block_height: u32,
+    network: Network,
+    pool: PoolKind,
+    action_index: u32,
+    expected_amount_zatoshis: &str,
+) -> Result<DecryptedMemo> {
+    if transaction_bytes.is_empty() {
+        return Err(VincaError::InvalidTransaction(
+            "Transaction bytes are empty".into(),
+        ));
+    }
+    if transaction_bytes.len() > MAX_TRANSACTION_BYTES {
+        return Err(VincaError::InputTooLarge(
+            transaction_bytes.len(),
+            MAX_TRANSACTION_BYTES,
+        ));
+    }
+
+    let expected_tx_id = TxId::from_hex(expected_tx_id_hex).ok_or_else(|| {
+        VincaError::InvalidTransaction("Selected receipt has an invalid transaction ID".into())
+    })?;
+    if expected_amount_zatoshis.is_empty()
+        || !expected_amount_zatoshis.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(VincaError::InvalidTransaction(
+            "Selected receipt has an invalid exact amount".into(),
+        ));
+    }
+    let expected_amount = expected_amount_zatoshis.parse::<u64>().map_err(|_| {
+        VincaError::InvalidTransaction("Selected receipt has an invalid exact amount".into())
+    })?;
+    let branch_id = match network {
+        Network::Testnet => BranchId::for_height(&TEST_NETWORK, BlockHeight(block_height)),
+        // V5+ transactions carry their branch ID in the transaction itself. Earlier formats
+        // cannot contain supported Orchard-family outputs, so this argument is not used there.
+        Network::Regtest => BranchId::Sprout,
+    };
+
+    let mut reader = transaction_bytes;
+    let transaction = Transaction::read(&mut reader, branch_id).map_err(|error| {
+        VincaError::InvalidTransaction(format!("Transaction parsing failed: {error}"))
+    })?;
+    if !reader.is_empty() {
+        return Err(VincaError::InvalidTransaction(
+            "Transaction contains trailing bytes".into(),
+        ));
+    }
+    if transaction.txid() != expected_tx_id {
+        return Err(VincaError::ReceiptMismatch(
+            "Fetched transaction ID does not match the selected receipt".into(),
+        ));
+    }
+
+    let incoming_ivk = incoming_ivk(retained)?;
+    let (note, memo_bytes) = match pool {
+        PoolKind::Orchard => transaction
+            .orchard_bundle()
+            .and_then(|bundle| {
+                bundle
+                    .decrypt_output_with_key(action_index as usize, &incoming_ivk)
+                    .map(|(note, _recipient, memo)| (note, memo))
+            })
+            .ok_or_else(|| {
+                VincaError::DecryptionFailed(
+                    "Selected Orchard action could not be decrypted with this viewing key".into(),
+                )
+            })?,
+        PoolKind::Ironwood => transaction
+            .ironwood_bundle()
+            .and_then(|bundle| {
+                bundle
+                    .decrypt_output_with_key(action_index as usize, &incoming_ivk)
+                    .map(|(note, _recipient, memo)| (note, memo))
+            })
+            .ok_or_else(|| {
+                VincaError::DecryptionFailed(
+                    "Selected Ironwood action could not be decrypted with this viewing key".into(),
+                )
+            })?,
+    };
+
+    if note.value().inner() != expected_amount {
+        return Err(VincaError::ReceiptMismatch(
+            "Decrypted note amount does not match the locally scanned receipt".into(),
+        ));
+    }
+
+    decode_memo(memo_bytes)
+}
+
+fn decode_memo(bytes: [u8; 512]) -> Result<DecryptedMemo> {
+    let memo_bytes = MemoBytes::from_bytes(&bytes)
+        .map_err(|error| VincaError::InvalidMemo(error.to_string()))?;
+
+    match Memo::try_from(memo_bytes).map_err(|error| VincaError::InvalidMemo(error.to_string()))? {
+        Memo::Empty => Ok(DecryptedMemo {
+            format: MemoFormat::Text,
+            text: String::new(),
+            raw_bytes_hex: None,
+        }),
+        Memo::Text(text) => Ok(DecryptedMemo {
+            format: MemoFormat::Text,
+            text: text.into(),
+            raw_bytes_hex: None,
+        }),
+        Memo::Arbitrary(bytes) => {
+            let raw_bytes_hex = hex::encode(bytes.as_ref());
+            Ok(DecryptedMemo {
+                format: MemoFormat::ArbitraryBytes,
+                text: raw_bytes_hex.clone(),
+                raw_bytes_hex: Some(raw_bytes_hex),
+            })
+        }
+        Memo::Future(bytes) => {
+            let raw_bytes_hex = hex::encode(bytes.as_array());
+            Ok(DecryptedMemo {
+                format: MemoFormat::ArbitraryBytes,
+                text: raw_bytes_hex.clone(),
+                raw_bytes_hex: Some(raw_bytes_hex),
+            })
+        }
+    }
 }
 
 fn prepared_ivk(
     retained: &RetainedOrchardKey,
 ) -> Result<orchard::keys::PreparedIncomingViewingKey> {
+    Ok(incoming_ivk(retained)?.prepare())
+}
+
+fn incoming_ivk(retained: &RetainedOrchardKey) -> Result<IncomingViewingKey> {
     let mut encoded = [0u8; 64];
     encoded[..32].copy_from_slice(&retained.dk);
     encoded[32..].copy_from_slice(&retained.ivk);
-    let incoming = Option::<IncomingViewingKey>::from(IncomingViewingKey::from_bytes(&encoded))
+    Option::<IncomingViewingKey>::from(IncomingViewingKey::from_bytes(&encoded))
         .ok_or_else(|| {
             VincaError::InvalidEncoding("Invalid Orchard incoming viewing key component".into())
-        })?;
-    Ok(incoming.prepare())
+        })
 }
 
 fn to_orchard_action(action: &CompactAction) -> Result<OrchardCompactAction> {
@@ -518,5 +642,66 @@ mod tests {
         let result = inspect_compact_actions(&retained, &[]);
 
         assert!(matches!(result, Err(VincaError::InvalidEncoding(_))));
+    }
+
+    #[test]
+    fn decodes_text_memo_without_padding_bytes() {
+        let mut bytes = [0u8; 512];
+        bytes[..5].copy_from_slice(b"hello");
+
+        let decoded = decode_memo(bytes).expect("valid text memo should decode");
+
+        assert_eq!(decoded.format, MemoFormat::Text);
+        assert_eq!(decoded.text, "hello");
+        assert_eq!(decoded.raw_bytes_hex, None);
+    }
+
+    #[test]
+    fn preserves_arbitrary_memo_as_hex() {
+        let mut bytes = [0u8; 512];
+        bytes[0] = 0xFF;
+        bytes[1] = 0x00;
+        bytes[2] = 0xFE;
+
+        let decoded = decode_memo(bytes).expect("arbitrary memo should decode");
+
+        assert_eq!(decoded.format, MemoFormat::ArbitraryBytes);
+        assert_eq!(decoded.text, decoded.raw_bytes_hex.as_deref().unwrap());
+        assert!(decoded.text.starts_with("00fe"));
+    }
+
+    #[test]
+    fn rejects_empty_transaction_and_non_decimal_receipt_amount() {
+        let retained = RetainedOrchardKey {
+            dk: [0x01; 32],
+            ivk: [0x02; 32],
+        };
+
+        assert!(matches!(
+            decrypt_transaction_memo(
+                &retained,
+                &[],
+                &"00".repeat(32),
+                2_700_050,
+                Network::Testnet,
+                PoolKind::Orchard,
+                0,
+                "100000000",
+            ),
+            Err(VincaError::InvalidTransaction(_))
+        ));
+        assert!(matches!(
+            decrypt_transaction_memo(
+                &retained,
+                &[0],
+                &"00".repeat(32),
+                2_700_050,
+                Network::Testnet,
+                PoolKind::Orchard,
+                0,
+                "1e8",
+            ),
+            Err(VincaError::InvalidTransaction(_))
+        ));
     }
 }

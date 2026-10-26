@@ -3,9 +3,9 @@
 use crate::state::{clear_all_keys, revoke_key, store_key, with_key};
 use serde::{Deserialize, Serialize};
 use vinca_core::{
-    compare_orchard_keys, decode_uivk, decrypt_full_note_memo, inspect_compact_actions,
+    compare_orchard_keys, decode_uivk, decrypt_transaction_memo, inspect_compact_actions,
     inspect_compact_blocks, validate_orchard_receiver, CompactAction, Network, OrchardRawReceiver,
-    PoolKind, VincaError,
+    PoolKind, VincaError, MAX_TRANSACTION_BYTES,
 };
 
 /// Incoming worker request message.
@@ -30,13 +30,15 @@ pub enum WorkerRequest {
         handle: String,
         actions: Vec<CompactAction>,
     },
-    DecryptMemo {
+    DecryptTransactionMemo {
         handle: String,
-        epk_hex: String,
-        ciphertext_hex: String,
-        nullifier_hex: String,
-        output_index: u32,
-        amount_zatoshis: u64,
+        transaction_bytes: Vec<u8>,
+        expected_tx_id_hex: String,
+        block_height: u32,
+        network: Network,
+        pool: PoolKind,
+        action_index: u32,
+        expected_amount_zatoshis: String,
     },
     RevokeHandle {
         handle: String,
@@ -85,6 +87,10 @@ impl WorkerResponse {
             VincaError::InvalidEncoding(_) => "INVALID_ENCODING",
             VincaError::MalformedComponent(_) => "MALFORMED_COMPONENT",
             VincaError::InvalidCompactBlock(_) => "INVALID_COMPACT_BLOCK",
+            VincaError::InvalidTransaction(_) => "INVALID_TRANSACTION",
+            VincaError::ReceiptMismatch(_) => "RECEIPT_MISMATCH",
+            VincaError::DecryptionFailed(_) => "DECRYPTION_FAILED",
+            VincaError::InvalidMemo(_) => "INVALID_MEMO",
             VincaError::InspectionUnavailable(_) => "INSPECTION_UNAVAILABLE",
             VincaError::NoRetainedComponents => "NO_RETAINED_COMPONENTS",
             VincaError::HandleNotFound(_) => "HANDLE_NOT_FOUND",
@@ -184,39 +190,32 @@ pub fn handle_request(req: WorkerRequest) -> WorkerResponse {
                 Err(err) => WorkerResponse::err(err),
             }
         }
-        WorkerRequest::DecryptMemo {
+        WorkerRequest::DecryptTransactionMemo {
             handle,
-            epk_hex,
-            ciphertext_hex,
-            nullifier_hex,
-            output_index,
-            amount_zatoshis,
+            transaction_bytes,
+            expected_tx_id_hex,
+            block_height,
+            network,
+            pool,
+            action_index,
+            expected_amount_zatoshis,
         } => {
-            let epk_bytes = match hex_to_bytes(&epk_hex, 32) {
-                Ok(b) => {
-                    let mut epk = [0u8; 32];
-                    epk.copy_from_slice(&b);
-                    epk
-                }
-                Err(e) => return WorkerResponse::err(e),
-            };
-            let ciphertext = match hex::decode(&ciphertext_hex) {
-                Ok(c) => c,
-                Err(_) => {
-                    return WorkerResponse::err(VincaError::InvalidMemo(
-                        "Invalid hex encoding for ciphertext".into(),
-                    ))
-                }
-            };
-
+            if transaction_bytes.len() > MAX_TRANSACTION_BYTES {
+                return WorkerResponse::err(VincaError::InputTooLarge(
+                    transaction_bytes.len(),
+                    MAX_TRANSACTION_BYTES,
+                ));
+            }
             let res = with_key(&handle, |key| {
-                decrypt_full_note_memo(
+                decrypt_transaction_memo(
                     key,
-                    &epk_bytes,
-                    &ciphertext,
-                    nullifier_hex,
-                    output_index,
-                    amount_zatoshis,
+                    &transaction_bytes,
+                    &expected_tx_id_hex,
+                    block_height,
+                    network,
+                    pool,
+                    action_index,
+                    &expected_amount_zatoshis,
                 )
             });
 

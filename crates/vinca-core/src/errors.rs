@@ -52,6 +52,12 @@ pub enum VincaError {
     #[error("Invalid compact-block response: {0}")]
     InvalidCompactBlock(String),
 
+    #[error("Invalid transaction: {0}")]
+    InvalidTransaction(String),
+
+    #[error("Transaction does not match the selected receipt: {0}")]
+    ReceiptMismatch(String),
+
     #[error("Protocol inspection is unavailable: {0}")]
     InspectionUnavailable(String),
 

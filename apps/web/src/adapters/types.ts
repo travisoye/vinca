@@ -83,7 +83,7 @@ export interface VincaWorkerPort {
   /** Scans compact blocks locally in the worker. */
   scanRange(handle: OpaqueKeyHandle, range: CoverageRange, compactBlocks: Uint8Array): Promise<WorkerScanResult>;
   /** Decrypts an explicit memo using the opaque key handle and full transaction bytes. */
-  decryptMemo(handle: OpaqueKeyHandle, txBytes: Uint8Array, actionIndex: number): Promise<WorkerDecryptedMemoResult>;
+  decryptMemo(handle: OpaqueKeyHandle, txBytes: Uint8Array, receipt: Receipt): Promise<WorkerDecryptedMemoResult>;
   /** Safely discards and zeroises key material in worker memory. */
   destroyHandle(handle: OpaqueKeyHandle): Promise<void>;
 }

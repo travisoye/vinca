@@ -31,7 +31,7 @@ When sharing viewing capabilities or audit evidence, wallet developers face crit
   1. **Context-Access Package:** Exports continuing viewing access with cryptographic warning disclosures and unambiguous retained-copy notices.
   2. **Record Snapshot:** Exports selected transaction receipts and metadata with **zero key material** and zero note-opening secrets.
 - **Zero-Float Financial Math:** All values are represented as exact integer zatoshis (`Zatoshis = string`), transported as decimal strings, and formatted via BigInt arithmetic.
-- **On-Demand Memo Fetching:** Compact block scanning is decoupled from transaction memos. Memos are never fetched automatically; fetching requires explicit confirmation of the public IP query trade-off.
+- **Memo Retrieval Status:** Memos are never fetched automatically, and the interface requires explicit consent before a transaction query. The generated WASM package in this workspace does not yet expose a verified full-transaction memo decryptor, so the current worker reports an explicit unavailable error rather than displaying a memo.
 - **Permanent Mainnet Rejection:** Vinca strictly rejects mainnet keys, addresses, and chain endpoints at all architectural boundaries.
 
 ---

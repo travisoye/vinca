@@ -6,6 +6,7 @@
 import type {
   CoverageRange,
   Network,
+  Receipt,
 } from "@/types";
 import type {
   OpaqueKeyHandle,
@@ -87,8 +88,16 @@ export class VincaWorkerClient implements VincaWorkerPort {
     return this.sendRequest<WorkerScanResult>("scan_range", { handle, range, compactBlocks });
   }
 
-  async decryptMemo(handle: OpaqueKeyHandle, txBytes: Uint8Array, actionIndex: number): Promise<WorkerDecryptedMemoResult> {
-    return this.sendRequest<WorkerDecryptedMemoResult>("decrypt_memo", { handle, txBytes, actionIndex });
+  async decryptMemo(
+    handle: OpaqueKeyHandle,
+    txBytes: Uint8Array,
+    receipt: Receipt,
+  ): Promise<WorkerDecryptedMemoResult> {
+    return this.sendRequest<WorkerDecryptedMemoResult>("decrypt_memo", {
+      handle,
+      txBytes,
+      receipt,
+    });
   }
 
   async destroyHandle(handle: OpaqueKeyHandle): Promise<void> {

@@ -51,7 +51,6 @@ export function ContextDetailPage() {
     isScanning,
     scanProgress,
     requestMemo,
-    importOfflineMemo,
   } = useWorkspace();
 
   const context = contexts.find((c) => c.id === contextId);
@@ -470,6 +469,7 @@ export function ContextDetailPage() {
           open={memoDialogOpen}
           onOpenChange={setMemoDialogOpen}
           onConfirmFetch={requestMemo}
+          onMemoFetched={setViewingMemoText}
           onOpenOfflineImport={(r) => {
             setActiveReceiptForMemo(r);
             setOfflineImportOpen(true);
@@ -480,7 +480,6 @@ export function ContextDetailPage() {
           receipt={activeReceiptForMemo}
           open={offlineImportOpen}
           onOpenChange={setOfflineImportOpen}
-          onImportMemo={importOfflineMemo}
         />
       </div>
     </WorkspaceGate>

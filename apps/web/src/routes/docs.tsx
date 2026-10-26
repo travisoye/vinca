@@ -539,7 +539,9 @@ export function DocsPage() {
                   </div>
                   <p className="text-xs text-muted-foreground leading-relaxed">
                     Scanning compact blocks detects note values and commitments. Plaintext memo fields require an
-                    explicit user confirmation, fetching the full raw transaction and recording the action in the audit log.
+                    explicit user confirmation before any full-transaction query. The generated WASM package in this
+                    workspace does not yet expose a verified full-transaction memo decryptor, so requests return an
+                    explicit unavailable error.
                   </p>
                 </div>
               </div>
@@ -903,7 +905,7 @@ export function DocsPage() {
                     code={`export interface VincaWorkerPort {
   decodeUivk(rawBytes: Uint8Array, network: Network): Promise<WorkerDecodedKeyResult>;
   scanRange(handle: OpaqueKeyHandle, range: CoverageRange, compactBlocks: Uint8Array): Promise<WorkerScanResult>;
-  decryptMemo(handle: OpaqueKeyHandle, txBytes: Uint8Array, actionIndex: number): Promise<WorkerDecryptedMemoResult>;
+  decryptMemo(handle: OpaqueKeyHandle, txBytes: Uint8Array, receipt: Receipt): Promise<WorkerDecryptedMemoResult>;
   destroyHandle(handle: OpaqueKeyHandle): Promise<void>;
 }`}
                     language="typescript"
@@ -1024,6 +1026,11 @@ export function DocsPage() {
                   Live scanning and local note inspection run directly in the browser against testnet and
                   regtest chains. Mainnet viewing keys and network endpoints remain permanently disabled
                   by design.
+                </p>
+                <p>
+                  The generated WASM package does not yet expose a verified full-transaction memo decryptor. A
+                  request therefore returns an explicit unavailable error, and offline transaction import does not
+                  parse or save transaction data.
                 </p>
                 <p>
                   Recovery depends on your own encrypted exports rather than any hosted copy of the

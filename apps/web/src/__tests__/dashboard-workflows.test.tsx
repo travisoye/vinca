@@ -3,10 +3,30 @@
   Written under the validation freeze; NOT executed until explicitly authorised
   by the user.
 */
-import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import App from "@/App";
+import {
+  MemoPrivacyDialog,
+  OfflineMemoImportDialog,
+} from "@/components/dashboard/memo-dialog";
+import type { Receipt } from "@/types";
+
+const memoDialogReceipt: Receipt = {
+  id: "receipt-memo-test",
+  contextId: "context-memo-test",
+  network: "testnet",
+  pool: "orchard",
+  txIdHex: "0123456789abcdef".repeat(4),
+  actionIndex: 0,
+  recipientAddress: null,
+  amountZatoshis: "0",
+  blockHeight: 1,
+  observedUtc: null,
+  evidence: "locally-inspected",
+  memo: { state: "not-requested" },
+};
 
 function renderAt(path: string) {
   return render(
@@ -98,6 +118,83 @@ describe("Phase 3 Dashboard & Sample Workflows", () => {
       expect(screen.getByText(/Fetching the full transaction containing output/i)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /acknowledge & fetch memo/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /use offline import/i })).toBeInTheDocument();
+    });
+
+    it("keeps the memo disclosure open and shows the decryption error", async () => {
+      const onOpenChange = vi.fn();
+      const onMemoFetched = vi.fn();
+      const onConfirmFetch = vi
+        .fn()
+        .mockRejectedValue(new Error("Memo decryption is unavailable."));
+
+      render(
+        <MemoPrivacyDialog
+          receipt={memoDialogReceipt}
+          open
+          onOpenChange={onOpenChange}
+          onConfirmFetch={onConfirmFetch}
+          onMemoFetched={onMemoFetched}
+          onOpenOfflineImport={vi.fn()}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /acknowledge & fetch memo/i }));
+
+      expect(await screen.findByText("Memo decryption is unavailable.")).toBeInTheDocument();
+      expect(screen.getByText("Transaction-Interest Disclosure")).toBeInTheDocument();
+      expect(onOpenChange).not.toHaveBeenCalled();
+      expect(onMemoFetched).not.toHaveBeenCalled();
+    });
+
+    it("opens memo text and closes the disclosure only after a successful fetch", async () => {
+      let resolveFetch!: (memoText: string) => void;
+      const onOpenChange = vi.fn();
+      const onMemoFetched = vi.fn();
+      const onConfirmFetch = vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveFetch = resolve;
+          }),
+      );
+
+      render(
+        <MemoPrivacyDialog
+          receipt={memoDialogReceipt}
+          open
+          onOpenChange={onOpenChange}
+          onConfirmFetch={onConfirmFetch}
+          onMemoFetched={onMemoFetched}
+          onOpenOfflineImport={vi.fn()}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /acknowledge & fetch memo/i }));
+      expect(
+        screen.getByRole("button", { name: /fetching and decrypting/i }),
+      ).toBeDisabled();
+      expect(onOpenChange).not.toHaveBeenCalled();
+
+      resolveFetch("Memo content from the worker");
+      await waitFor(() =>
+        expect(onMemoFetched).toHaveBeenCalledWith("Memo content from the worker"),
+      );
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("does not present offline transaction data as a decrypted memo", () => {
+      render(
+        <OfflineMemoImportDialog
+          receipt={memoDialogReceipt}
+          open
+          onOpenChange={vi.fn()}
+        />,
+      );
+
+      expect(
+        screen.getByText(/Offline transaction parsing and memo decryption are not implemented yet/i),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /decrypt locally/i })).not.toBeInTheDocument();
     });
 
     it("renders archive and deletion dialogs with non-revocation boundaries", () => {

@@ -146,12 +146,19 @@ pub struct ScannedReceipt {
     pub pool: PoolKind,
 }
 
-/// A fully decrypted note including optional memo text.
+/// The decoded memo from a transaction selected by a locally scanned receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DecryptedNote {
-    pub pool: PoolKind,
-    pub amount_zatoshis: u64,
-    pub memo: Option<String>,
-    pub nullifier: String,
-    pub output_index: u32,
+#[serde(rename_all = "camelCase")]
+pub struct DecryptedMemo {
+    pub format: MemoFormat,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_bytes_hex: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MemoFormat {
+    Text,
+    ArbitraryBytes,
 }

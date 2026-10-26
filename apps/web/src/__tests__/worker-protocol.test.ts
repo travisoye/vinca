@@ -19,9 +19,22 @@ describe("Phase 5: Worker Client Protocol & Policy Enforcement", () => {
     await expect(
       client.scanRange(handle, { startHeight: 100, endHeight: 100 }, new Uint8Array()),
     ).rejects.toThrow(/WORKER_UNAVAILABLE/);
-    await expect(client.decryptMemo(handle, new Uint8Array([1, 2, 3]), 0)).rejects.toThrow(
-      /WORKER_UNAVAILABLE/,
-    );
+    await expect(
+      client.decryptMemo(handle, new Uint8Array([1, 2, 3]), {
+        id: "receipt-test",
+        contextId: "context-test",
+        network: "testnet",
+        pool: "orchard",
+        txIdHex: "00".repeat(32),
+        actionIndex: 0,
+        recipientAddress: null,
+        amountZatoshis: "1",
+        blockHeight: 100,
+        observedUtc: null,
+        evidence: "locally-inspected",
+        memo: { state: "not-requested" },
+      }),
+    ).rejects.toThrow(/WORKER_UNAVAILABLE/);
   });
 
   it("does not simulate handle destruction when no worker exists", async () => {
