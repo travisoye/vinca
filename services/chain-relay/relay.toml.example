@@ -26,6 +26,7 @@ allowed_origins = [
 # Upstream allowlist: only these URL prefixes may appear as upstream_url
 # in any profile. Prevents config injection attacks.
 upstream_allowlist = [
+    "https://testnet.zec.rocks",
     "https://lightwalletd.testnet.electriccoin.co",
     "https://testnet.lightwalletd.com",
     # Add your regtest node here:
@@ -35,7 +36,7 @@ upstream_allowlist = [
 # ─── Testnet profile ─────────────────────────────────────────────────────────
 [[profiles]]
 network = "testnet"
-upstream_url = "https://lightwalletd.testnet.electriccoin.co:9067"
+upstream_url = "https://testnet.zec.rocks:443"
 sapling_activation_height = 280_000
 orchard_activation_height = 1_842_420
 # ironwood_activation_height = <TBD when activated on testnet>

@@ -119,26 +119,6 @@ export class VincaWorkerClient implements VincaWorkerPort {
               },
             });
           }
-          if (
-            (range.startHeight <= 2620000 && range.endHeight >= 2620000) ||
-            (range.startHeight <= 2710250 && range.endHeight >= 2710250)
-          ) {
-            discovered.push({
-              id: `rc-testnet-zingo-260`,
-              network: "testnet",
-              pool: "orchard",
-              amountZatoshis: "260000000",
-              txIdHex: "3f8b1a92c4e5d60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d",
-              actionIndex: 0,
-              blockHeight: range.startHeight <= 2620000 ? 2620000 : 2710250,
-              evidence: "locally-inspected",
-              memo: {
-                state: "available",
-                format: "text",
-                text: "Zingo testnet disbursement: 2.60 TAZ incoming transfer",
-              },
-            });
-          }
           const res: WorkerScanResult = {
             inspectedRange: range,
             decryptedReceipts: discovered,

@@ -290,35 +290,53 @@ impl LightwalletdClient {
         Ok(raw_tx.data)
     }
 
-    // ---- Stub gRPC calls (replaced by real tonic stubs in the codegen build) ---
+    // ---- Live gRPC calls via tonic::client::Grpc to lightwalletd CompactTxStreamer ----
 
-    /// Stub: will be replaced by `compact_tx_streamer_client::get_latest_block`.
+    /// Calls `GetLatestBlock` on upstream lightwalletd.
     async fn call_get_latest_block(
         &self,
-        _request: tonic::Request<proto::BlockId>,
+        request: tonic::Request<proto::BlockId>,
     ) -> Result<tonic::Response<proto::BlockId>, tonic::Status> {
-        Err(tonic::Status::unimplemented(
-            "GetLatestBlock not yet wired — codegen pending authorised build.",
-        ))
+        let mut grpc = tonic::client::Grpc::new(self.channel.clone());
+        let codec = tonic::codec::ProstCodec::default();
+        let path = http::uri::PathAndQuery::from_static(
+            "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetLatestBlock",
+        );
+        grpc.ready()
+            .await
+            .map_err(|e| tonic::Status::unavailable(e.to_string()))?;
+        grpc.unary(request, path, codec).await
     }
 
-    /// Stub: will be replaced by `compact_tx_streamer_client::get_block_range`.
+    /// Calls `GetBlockRange` on upstream lightwalletd, streaming compact blocks.
     async fn call_get_block_range(
         &self,
-        _request: tonic::Request<proto::BlockRange>,
+        request: tonic::Request<proto::BlockRange>,
     ) -> Result<tonic::Response<tonic::codec::Streaming<proto::CompactBlock>>, tonic::Status> {
-        Err(tonic::Status::unimplemented(
-            "GetBlockRange not yet wired — codegen pending authorised build.",
-        ))
+        let mut grpc = tonic::client::Grpc::new(self.channel.clone());
+        let codec = tonic::codec::ProstCodec::default();
+        let path = http::uri::PathAndQuery::from_static(
+            "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetBlockRange",
+        );
+        grpc.ready()
+            .await
+            .map_err(|e| tonic::Status::unavailable(e.to_string()))?;
+        grpc.server_streaming(request, path, codec).await
     }
 
-    /// Stub: will be replaced by `compact_tx_streamer_client::get_transaction`.
+    /// Calls `GetTransaction` on upstream lightwalletd.
     async fn call_get_transaction(
         &self,
-        _request: tonic::Request<proto::TxFilter>,
+        request: tonic::Request<proto::TxFilter>,
     ) -> Result<tonic::Response<proto::RawTransaction>, tonic::Status> {
-        Err(tonic::Status::unimplemented(
-            "GetTransaction not yet wired — codegen pending authorised build.",
-        ))
+        let mut grpc = tonic::client::Grpc::new(self.channel.clone());
+        let codec = tonic::codec::ProstCodec::default();
+        let path = http::uri::PathAndQuery::from_static(
+            "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetTransaction",
+        );
+        grpc.ready()
+            .await
+            .map_err(|e| tonic::Status::unavailable(e.to_string()))?;
+        grpc.unary(request, path, codec).await
     }
 }

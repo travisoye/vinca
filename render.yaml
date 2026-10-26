@@ -12,6 +12,6 @@ services:
       - key: WEB_ORIGIN
         value: "https://vincaonzec.vercel.app"
       - key: LIGHTWALLETD_TESTNET_URL
-        value: "https://lightwalletd.testnet.electriccoin.co:9067"
+        value: "https://testnet.zec.rocks:443"
       - key: RUST_LOG
         value: "info,vinca_chain_relay=info"

@@ -100,8 +100,9 @@ export class RelayClient implements VincaRelayPort {
 
       if (res.ok) {
         const data = await res.json();
-        if (typeof data.height === "number") {
-          return data.height;
+        const height = typeof data.tip_height === "number" ? data.tip_height : data.height;
+        if (typeof height === "number") {
+          return height;
         }
       }
     } catch {

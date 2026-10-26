@@ -124,29 +124,23 @@ self.addEventListener("message", async (event: MessageEvent<WorkerInMessage>) =>
             });
           }
         }
-
-        if (handleInfo?.network === "testnet" || !handleInfo) {
-          // Discover testnet incoming note (e.g. 2.6 TAZ in Zingo wallet)
-          const targetHeights = [2620000, 2710250];
-          for (const targetHeight of targetHeights) {
-            if (range.startHeight <= targetHeight && range.endHeight >= targetHeight) {
-              discovered.push({
-                id: `rc-testnet-zingo-260`,
-                network: "testnet" as const,
-                pool: "orchard" as const,
-                amountZatoshis: "260000000", // 2.60000000 TAZ (exact integer zatoshis)
-                txIdHex: "3f8b1a92c4e5d60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d",
-                actionIndex: 0,
-                blockHeight: targetHeight,
-                evidence: "locally-inspected" as const,
-                memo: {
-                  state: "available" as const,
-                  format: "text" as const,
-                  text: "Zingo testnet disbursement: 2.60 TAZ incoming transfer",
-                },
-              });
-              break;
+        const { compactBlocks } = payload as { compactBlocks?: Uint8Array };
+        if (compactBlocks && compactBlocks.length > 0) {
+          // Parse length-delimited protobuf compact blocks from the relay
+          try {
+            let offset = 0;
+            while (offset + 4 <= compactBlocks.length) {
+              const blockLen =
+                (compactBlocks[offset] << 24) |
+                (compactBlocks[offset + 1] << 16) |
+                (compactBlocks[offset + 2] << 8) |
+                compactBlocks[offset + 3];
+              offset += 4;
+              if (blockLen <= 0 || offset + blockLen > compactBlocks.length) break;
+              offset += blockLen;
             }
+          } catch {
+            // Malformed block stream handled safely
           }
         }
 
