@@ -100,9 +100,14 @@ pub mod proto {
         pub hash: Vec<u8>,
         #[prost(uint32, tag = "3")]
         pub fee: u32,
-        /// Compact Orchard/Sapling actions.
-        #[prost(message, repeated, tag = "4")]
-        pub actions: Vec<CompactOrchardAction>,
+        /// Sapling spends. Orchard actions are field 6 and Ironwood actions
+        /// are field 9 in current lightwalletd responses.
+        #[prost(bytes = "vec", repeated, tag = "4")]
+        pub sapling_spends: Vec<Vec<u8>>,
+        #[prost(message, repeated, tag = "6")]
+        pub orchard_actions: Vec<CompactOrchardAction>,
+        #[prost(message, repeated, tag = "9")]
+        pub ironwood_actions: Vec<CompactOrchardAction>,
     }
 
     /// Compact Orchard action for trial decryption.
@@ -338,5 +343,47 @@ impl LightwalletdClient {
             .await
             .map_err(|e| tonic::Status::unavailable(e.to_string()))?;
         grpc.unary(request, path, codec).await
+    }
+}
+
+#[cfg(test)]
+mod proto_tests {
+    use super::proto::CompactTx;
+    use prost::Message;
+
+    fn bytes_field(tag: u8, payload: &[u8]) -> Vec<u8> {
+        let mut encoded = vec![(tag << 3) | 2];
+        let mut len = payload.len() as u64;
+        while len >= 0x80 {
+            encoded.push((len as u8) | 0x80);
+            len >>= 7;
+        }
+        encoded.push(len as u8);
+        encoded.extend_from_slice(payload);
+        encoded
+    }
+
+    #[test]
+    fn preserves_sapling_and_current_orchard_ironwood_fields() {
+        let mut action = Vec::new();
+        for tag in 1..=4 {
+            let size = if tag == 4 { 52 } else { 32 };
+            action.extend(bytes_field(tag, &vec![tag; size]));
+        }
+
+        let mut compact_tx = Vec::new();
+        compact_tx.extend(bytes_field(4, &action));
+        compact_tx.extend(bytes_field(6, &action));
+        compact_tx.extend(bytes_field(9, &action));
+
+        let decoded = CompactTx::decode(compact_tx.as_slice())
+            .expect("compact transaction fields should decode");
+        assert_eq!(decoded.sapling_spends.len(), 1);
+        assert_eq!(decoded.orchard_actions.len(), 1);
+        assert_eq!(decoded.ironwood_actions.len(), 1);
+
+        let roundtrip = CompactTx::decode(decoded.encode_to_vec().as_slice())
+            .expect("compact transaction fields should round-trip");
+        assert_eq!(roundtrip, decoded);
     }
 }

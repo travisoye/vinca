@@ -60,10 +60,8 @@ export interface VincaPorts {
 export interface WorkerDecodedKeyResult {
   readonly handle: OpaqueKeyHandle;
   readonly network: Network;
-  readonly birthdayHeight: number;
   readonly retainedPools: readonly PoolKind[];
   readonly declaredUnretained: readonly UnsupportedPoolKind[];
-  readonly incomingDecryptionScalarFingerprint: string;
 }
 
 export interface WorkerScanResult {

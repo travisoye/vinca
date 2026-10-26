@@ -6,6 +6,16 @@
 
 ---
 
+> **Testnet scanning status (2026-10-26):** Testnet UIVK import and compact
+> Orchard/Ironwood block trial-decryption are now wired through the Rust WASM
+> worker. Local cryptographic vectors and scanner tests pass, and the WASM
+> package builds. This does **not** confirm any particular wallet receipt:
+> this workspace has not scanned testnet using your key, and old scan-height
+> records are not proof of decrypted blocks. Import the actual incoming key
+> locally and its real birthday height; verify that the relay is connected and
+> the resulting coverage includes the height of the receipt. Never send the key
+> in chat.
+
 ## 1. Overview
 
 **Vinca** is an accountless, browser-based disclosure workbench built for developers, compliance engineers, and recipients operating on Zcash testnet and reproducible regtest environments.
@@ -153,17 +163,15 @@ The relay binds to `http://localhost:8080` (or `PORT`) and exposes read-only pub
 To inspect an incoming viewing key in Vinca, export an **incoming viewing key only** (UIVK) from a supported testnet wallet. **Never export spending keys or seeds.**
 
 ### Zallet (CLI / RPC)
-Export the testnet Orchard incoming viewing key using the RPC:
-```bash
-zallet-cli getincomingviewingkey "orchard"
-```
-The resulting key will begin with `uviewtest1...`.
+Use Zallet's documented export procedure to export the account's Unified
+Incoming Viewing Key (UIVK). The testnet prefix is `uivktest1...` for
+ZIP-316 revision 0 or `uvitest1...` for revision 2.
 
 ### Ywallet
 1. Open Ywallet and switch network to **Testnet**.
 2. Navigate to **Settings** → **Backup / Keys**.
 3. Select **Export Viewing Key** (ensure "Incoming Only" is selected).
-4. Verify the exported string starts with `uviewtest` or `zviewtest`.
+4. Verify the exported testnet UIVK starts with `uivktest` or `uvitest`.
 
 ### Zashi
 1. Switch to Zcash Testnet in **Advanced Settings**.
@@ -209,6 +217,9 @@ docker run -p 8080:8080 \
 ## 7. Validation & Verification Ledger
 
 Vinca enforces a strict validation ledger tracking real execution evidence:
+
+The results below are historical source/build checks. They do not establish
+that live testnet note decryption works; see the operational status above.
 
 | Test / Verification Suite | Command | Result | Pass Rate / Metric |
 | :--- | :--- | :--- | :--- |

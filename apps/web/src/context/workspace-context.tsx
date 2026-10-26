@@ -235,6 +235,9 @@ export function WorkspaceProvider({
       customLabel?: string,
       rawKeyBytes?: Uint8Array,
     ): Promise<string> => {
+      if (!rawKeyBytes && mode === "live") {
+        throw new Error("A real incoming viewing-key file is required for live import.");
+      }
       const bytesToDecode =
         rawKeyBytes ?? new TextEncoder().encode(candidate.fileName + "\n" + candidate.label);
 
@@ -266,7 +269,7 @@ export function WorkspaceProvider({
         id: newId,
         label: customLabel?.trim() || candidate.label,
         network: decodeResult.network,
-        birthdayHeight: candidate.birthdayHeight || decodeResult.birthdayHeight,
+        birthdayHeight: candidate.birthdayHeight,
         status: "active",
         supportedPools: decodeResult.retainedPools.length > 0 ? decodeResult.retainedPools : candidate.supportedPools,
         unsupportedComponents:
@@ -276,7 +279,7 @@ export function WorkspaceProvider({
         overlappingContextIds,
         coverage: {
           source: "live-local-scan",
-          birthdayHeight: candidate.birthdayHeight || decodeResult.birthdayHeight,
+          birthdayHeight: candidate.birthdayHeight,
           scannedRanges: [],
           gaps: [],
           lastScannedHeight: null,
@@ -309,10 +312,9 @@ export function WorkspaceProvider({
         throw new Error(`Context not found: ${contextId}`);
       }
 
-      let handle = activeHandlesRef.current.get(contextId);
+      const handle = activeHandlesRef.current.get(contextId);
       if (!handle) {
-        handle = `vinca-handle-session-${contextId}` as OpaqueKeyHandle;
-        activeHandlesRef.current.set(contextId, handle);
+        throw new Error("The viewing key is not available in this session. Re-import it before scanning.");
       }
 
       setIsScanning(true);
@@ -413,38 +415,20 @@ export function WorkspaceProvider({
       const context = contexts.find((c) => c.id === receipt.contextId);
       if (!context) return;
 
-      let handle = activeHandlesRef.current.get(context.id);
+      const handle = activeHandlesRef.current.get(context.id);
       if (!handle) {
-        handle = `vinca-handle-session-${context.id}` as OpaqueKeyHandle;
-        activeHandlesRef.current.set(context.id, handle);
+        throw new Error("The viewing key is not available in this session. Re-import it before decrypting a memo.");
       }
 
-      try {
-        const updatedReceipt = await scannerRef.current.fetchAndDecryptMemo(
-          context,
-          handle,
-          receipt,
-        );
+      const updatedReceipt = await scannerRef.current.fetchAndDecryptMemo(
+        context,
+        handle,
+        receipt,
+      );
 
-        setReceipts((prev) =>
-          prev.map((r) => (r.id === receiptId ? updatedReceipt : r)),
-        );
-      } catch {
-        // Fallback memo state
-        setReceipts((prev) =>
-          prev.map((r) => {
-            if (r.id !== receiptId) return r;
-            return {
-              ...r,
-              memo: {
-                state: "available",
-                format: "text",
-                text: `Decrypted memo for action #${r.actionIndex}. Inspected locally in browser worker.`,
-              },
-            };
-          }),
-        );
-      }
+      setReceipts((prev) =>
+        prev.map((r) => (r.id === receiptId ? updatedReceipt : r)),
+      );
     },
     [contexts, receipts],
   );

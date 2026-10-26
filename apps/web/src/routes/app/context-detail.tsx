@@ -65,6 +65,17 @@ export function ContextDetailPage() {
   const [offlineImportOpen, setOfflineImportOpen] = useState(false);
   const [activeReceiptForMemo, setActiveReceiptForMemo] = useState<Receipt | null>(null);
   const [viewingMemoText, setViewingMemoText] = useState<string | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+
+  const handleScan = async () => {
+    if (!context) return;
+    setScanError(null);
+    try {
+      await scanContext(context.id);
+    } catch (error) {
+      setScanError(error instanceof Error ? error.message : "The scan could not be completed.");
+    }
+  };
 
   if (!context) {
     return (
@@ -219,7 +230,7 @@ export function ContextDetailPage() {
                   size="sm"
                   variant="outline"
                   disabled={isScanning}
-                  onClick={() => scanContext(context.id)}
+                  onClick={() => void handleScan()}
                   className="w-full text-xs"
                 >
                   <RefreshCw className={`size-3.5 ${isScanning ? "animate-spin text-primary" : ""}`} />
@@ -230,6 +241,19 @@ export function ContextDetailPage() {
                     : "Scan for notes"}
                 </Button>
               </div>
+              {scanError && (
+                <Alert variant="destructive">
+                  <AlertTriangle className="size-4" />
+                  <AlertTitle>Scan did not complete</AlertTitle>
+                  <AlertDescription>{scanError}</AlertDescription>
+                </Alert>
+              )}
+              {context.network === "testnet" && (
+                <p className="text-xs text-muted-foreground">
+                  Compact testnet blocks are trial-decrypted locally with the imported incoming key.
+                  Only matching notes appear here; this is not a spendable balance or payment proof.
+                </p>
+              )}
             </CardContent>
           </Card>
 

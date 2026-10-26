@@ -13,10 +13,17 @@ pub enum Network {
 }
 
 impl Network {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Network::Testnet => "testnet",
+            Network::Regtest => "regtest",
+        }
+    }
+
     pub fn hrp_prefix(&self) -> &'static str {
         match self {
-            Network::Testnet => "uviewtest",
-            Network::Regtest => "uviewregtest",
+            Network::Testnet => "uivktest",
+            Network::Regtest => "uivkregtest",
         }
     }
 }
@@ -126,6 +133,17 @@ pub struct CompactReceipt {
     pub pool: PoolKind,
     pub amount_zatoshis: u64,
     pub is_recipient: bool,
+}
+
+/// An Orchard note found while decoding a complete compact-block range.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScannedReceipt {
+    pub tx_id_hex: String,
+    pub action_index: usize,
+    pub block_height: u32,
+    pub block_time: u32,
+    pub amount_zatoshis: String,
+    pub pool: PoolKind,
 }
 
 /// A fully decrypted note including optional memo text.

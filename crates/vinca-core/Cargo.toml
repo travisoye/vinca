@@ -12,10 +12,14 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 zeroize = { workspace = true }
-bech32 = { workspace = true }
+zcash_address = { workspace = true }
+zcash_protocol = { workspace = true }
 subtle = { workspace = true }
 blake2b_simd = { workspace = true }
 sha2 = { workspace = true }
+orchard = { workspace = true }
+prost = { workspace = true }
+zcash_note_encryption = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
-hex = "0.4"

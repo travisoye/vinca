@@ -23,26 +23,61 @@ import { LiveScanner } from "@/lib/scanner/live-scanner";
 import type { ContextSummary, CoverageRange, Receipt } from "@/types";
 import type {
   OpaqueKeyHandle,
+  VincaRelayPort,
+  VincaWorkerPort,
+  WorkerDecodedKeyResult,
   WorkerScanResult,
 } from "@/adapters/types";
+
+function relayPort(overrides: Partial<VincaRelayPort>): VincaRelayPort {
+  return {
+    checkHealth: async () => ({
+      status: "unavailable",
+      upstreamConnected: false,
+      configuredProfiles: [],
+      latencyMs: 0,
+    }),
+    getTipHeight: async () => 0,
+    fetchCompactBlocks: async () => new Uint8Array(),
+    fetchTransaction: async () => new Uint8Array(),
+    ...overrides,
+  };
+}
+
+function workerPort(overrides: Partial<VincaWorkerPort>): VincaWorkerPort {
+  return {
+    decodeUivk: async (): Promise<WorkerDecodedKeyResult> => {
+      throw new Error("Not used by this test.");
+    },
+    scanRange: async (_handle, range) => ({
+      inspectedRange: range,
+      decryptedReceipts: [],
+      reorgDetected: false,
+    }),
+    decryptMemo: async () => {
+      throw new Error("Not used by this test.");
+    },
+    destroyHandle: async () => {},
+    ...overrides,
+  };
+}
 
 describe("Phase 8: Full Application Integration & Live Scanning", () => {
   // -------------------------------------------------------------------------
   // Group A: RelayClient Port Implementation
   // -------------------------------------------------------------------------
   describe("Group A: RelayClient Contract", () => {
-    it("reports relay health or fallback in offline environments", async () => {
-      const relay = new RelayClient({ baseUrl: "http://localhost:3999" });
+    it("reports unavailable readiness without inventing configured profiles", async () => {
+      const relay = new RelayClient({ baseUrl: "http://127.0.0.1:1", timeoutMs: 100 });
       const health = await relay.checkHealth();
-      expect(health).toHaveProperty("status");
-      expect(health).toHaveProperty("configuredProfiles");
-      expect(health.configuredProfiles).toContain("testnet");
+      expect(health.status).toBe("unavailable");
+      expect(health.upstreamConnected).toBe(false);
+      expect(health.configuredProfiles).toEqual([]);
     });
 
-    it("fetches testnet tip height and rejects mainnet queries", async () => {
-      const relay = new RelayClient();
-      const tip = await relay.getTipHeight("testnet");
-      expect(tip).toBeGreaterThan(0);
+    it("surfaces a missing testnet relay and rejects mainnet queries", async () => {
+      const relay = new RelayClient({ baseUrl: "http://127.0.0.1:1", timeoutMs: 100 });
+      await expect(relay.getTipHeight("testnet")).rejects.toThrow(/Relay request failed/);
 
       await expect(relay.getTipHeight("mainnet" as any)).rejects.toThrow(
         /MAINNET_REJECTED/,
@@ -78,8 +113,13 @@ describe("Phase 8: Full Application Integration & Live Scanning", () => {
 
       // Valid 64-char hex
       const validTxId = "a".repeat(64);
-      const bytes = await relay.fetchTransaction("testnet", validTxId);
-      expect(bytes).toBeInstanceOf(Uint8Array);
+      const unavailableRelay = new RelayClient({
+        baseUrl: "http://127.0.0.1:1",
+        timeoutMs: 100,
+      });
+      await expect(unavailableRelay.fetchTransaction("testnet", validTxId)).rejects.toThrow(
+        /Relay request failed/,
+      );
     });
   });
 
@@ -89,42 +129,16 @@ describe("Phase 8: Full Application Integration & Live Scanning", () => {
   describe("Group B: WorkerClient & Cryptographic Policy", () => {
     const worker = new VincaWorkerClient();
 
-    it("decodes valid testnet UIVK and yields opaque handle", async () => {
-      const uivkText = "uviewtest1samplevincakey0000";
-      const bytes = new TextEncoder().encode(uivkText);
-      const res = await worker.decodeUivk(bytes, "testnet");
-
-      expect(res.handle).toBeDefined();
-      expect(typeof res.handle).toBe("string");
-      expect(res.network).toBe("testnet");
-      expect(res.retainedPools).toContain("orchard");
-      expect(res.declaredUnretained).toContain("sapling");
-    });
-
-    it("rejects mainnet UIVKs with explicit error code", async () => {
-      const mainnetKey = new TextEncoder().encode("uview1mainnetkey0000");
-      await expect(worker.decodeUivk(mainnetKey, "testnet")).rejects.toThrow(
-        /MAINNET_REJECTED/,
+    it("never substitutes simulated key data when the WASM worker is missing", async () => {
+      const bytes = new TextEncoder().encode("uivktest1samplevincakey0000");
+      await expect(worker.decodeUivk(bytes, "testnet")).rejects.toThrow(
+        /WORKER_UNAVAILABLE/,
       );
     });
 
-    it("rejects Unified Full Viewing Keys (UFVK)", async () => {
-      const ufvkKey = new TextEncoder().encode("ufvk1samplefullviewingkey0000");
-      await expect(worker.decodeUivk(ufvkKey, "testnet")).rejects.toThrow(
-        /UFVK_REJECTED/,
-      );
-    });
-
-    it("rejects spending key material", async () => {
-      const spendingKey = new TextEncoder().encode("secret-spending-key-0000");
-      await expect(worker.decodeUivk(spendingKey, "testnet")).rejects.toThrow(
-        /SPENDING_KEY_REJECTED/,
-      );
-    });
-
-    it("destroys opaque handles cleanly", async () => {
+    it("does not report successful handle destruction without the worker", async () => {
       const handle = "vinca-handle-test-123" as OpaqueKeyHandle;
-      await expect(worker.destroyHandle(handle)).resolves.toBeUndefined();
+      await expect(worker.destroyHandle(handle)).rejects.toThrow(/WORKER_UNAVAILABLE/);
     });
   });
 
@@ -133,8 +147,21 @@ describe("Phase 8: Full Application Integration & Live Scanning", () => {
   // -------------------------------------------------------------------------
   describe("Group C: LiveScanner Engine & Reorg Handling", () => {
     it("scans contiguous ranges and produces deduplicated receipts", async () => {
-      const relay = new RelayClient();
-      const worker = new VincaWorkerClient();
+      const fetchedRanges: CoverageRange[] = [];
+      const relay = relayPort({
+        getTipHeight: async () => 2_700_200,
+        fetchCompactBlocks: async (_network, range) => {
+          fetchedRanges.push(range);
+          return new Uint8Array();
+        },
+      });
+      const worker = workerPort({
+        scanRange: async (_handle: OpaqueKeyHandle, range: CoverageRange): Promise<WorkerScanResult> => ({
+          inspectedRange: range,
+          decryptedReceipts: [],
+          reorgDetected: false,
+        }),
+      });
       const scanner = new LiveScanner(relay, worker);
 
       const mockContext: ContextSummary = {
@@ -149,7 +176,7 @@ describe("Phase 8: Full Application Integration & Live Scanning", () => {
         coverage: {
           source: "live-local-scan",
           birthdayHeight: 2_700_000,
-          scannedRanges: [{ startHeight: 2_700_000, endHeight: 2_700_100 }],
+          scannedRanges: [{ startHeight: 2_699_000, endHeight: 2_700_100 }],
           gaps: [],
           lastScannedHeight: 2_700_100,
           tipHeight: 2_700_200,
@@ -168,14 +195,26 @@ describe("Phase 8: Full Application Integration & Live Scanning", () => {
       );
 
       expect(result.updatedContext.coverage.lastScannedHeight).toBe(2_700_200);
+      expect(result.updatedContext.coverage.scannerVersion).toBe(1);
+      expect(fetchedRanges[0]).toEqual({ startHeight: 2_700_000, endHeight: 2_700_099 });
+      expect(result.updatedContext.coverage.scannedRanges[0].startHeight).toBe(2_700_000);
       expect(result.updatedContext.coverage.scannedRanges.length).toBeGreaterThan(0);
       expect(result.reorgOccurred).toBe(false);
+
+      const nextScan = await scanner.scanContext(
+        result.updatedContext,
+        "vinca-handle-mock" as OpaqueKeyHandle,
+        [],
+        { targetHeight: 2_700_200 },
+      );
+      expect(fetchedRanges).toHaveLength(3);
+      expect(nextScan.updatedContext.coverage.scannerVersion).toBe(1);
     });
 
     it("rolls back coverage and receipts on chain reorganisation", async () => {
       // Mock worker that simulates a reorganisation detection at block 2,700,050
-      const mockReorgWorker: any = {
-        scanRange: async (_h: any, range: CoverageRange): Promise<WorkerScanResult> => {
+      const mockReorgWorker = workerPort({
+        scanRange: async (_handle: OpaqueKeyHandle, range: CoverageRange): Promise<WorkerScanResult> => {
           if (range.startHeight > 2_700_100) {
             return {
               inspectedRange: range,
@@ -190,9 +229,11 @@ describe("Phase 8: Full Application Integration & Live Scanning", () => {
             reorgDetected: false,
           };
         },
-      };
+      });
 
-      const relay = new RelayClient();
+      const relay = relayPort({
+        fetchCompactBlocks: async () => new Uint8Array(),
+      });
       const scanner = new LiveScanner(relay, mockReorgWorker);
 
       const existingReceipts: Receipt[] = [
@@ -243,6 +284,7 @@ describe("Phase 8: Full Application Integration & Live Scanning", () => {
           lastScannedHeight: 2_700_100,
           tipHeight: 2_700_150,
           stale: false,
+          scannerVersion: 1,
         },
         receiptCount: 2,
         createdAtUtc: new Date().toISOString(),
@@ -262,9 +304,15 @@ describe("Phase 8: Full Application Integration & Live Scanning", () => {
       expect(scanResult.updatedContext.coverage.reorgNotice?.rollbackHeight).toBe(2_700_050);
     });
 
-    it("fetches and decrypts memos on-demand after privacy confirmation", async () => {
-      const relay = new RelayClient();
-      const worker = new VincaWorkerClient();
+    it("does not claim memo decryption succeeded without the production worker", async () => {
+      const relay = relayPort({
+        fetchTransaction: async () => new Uint8Array(),
+      });
+      const worker = workerPort({
+        decryptMemo: async () => {
+          throw new Error("[INSPECTION_UNAVAILABLE] Production decryptor is not connected.");
+        },
+      });
       const scanner = new LiveScanner(relay, worker);
 
       const mockReceipt: Receipt = {
@@ -282,16 +330,13 @@ describe("Phase 8: Full Application Integration & Live Scanning", () => {
         memo: { state: "not-requested" },
       };
 
-      const updated = await scanner.fetchAndDecryptMemo(
-        { id: "ctx-test", network: "testnet" } as any,
-        "vinca-handle-test" as OpaqueKeyHandle,
-        mockReceipt,
-      );
-
-      expect(updated.memo.state).toBe("available");
-      if (updated.memo.state === "available") {
-        expect(updated.memo.text).toContain("Invoice #1042");
-      }
+      await expect(
+        scanner.fetchAndDecryptMemo(
+          { id: "ctx-test", network: "testnet" } as any,
+          "vinca-handle-test" as OpaqueKeyHandle,
+          mockReceipt,
+        ),
+      ).rejects.toThrow(/INSPECTION_UNAVAILABLE/);
     });
   });
 

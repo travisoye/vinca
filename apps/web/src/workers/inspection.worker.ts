@@ -1,195 +1,206 @@
 /*
   Vinca WebAssembly inspection worker.
-  Runs off the main React thread. Holds decoded viewing key material strictly
-  in worker memory under opaque handles; raw viewing keys NEVER enter React state.
+  Private key material is decoded and retained only in WASM worker memory.
 */
 
+import init, {
+  dispatch_worker_message,
+  scan_compact_blocks,
+} from "../wasm/vinca_wasm";
 import type {
   CoverageRange,
   Network,
-  PoolKind,
-  UnsupportedPoolKind,
+  Receipt,
 } from "@/types";
 
 export interface WorkerInMessage {
   readonly id: string;
   readonly type: "decode_uivk" | "scan_range" | "decrypt_memo" | "destroy_handle";
-  readonly payload: any;
+  readonly payload: unknown;
 }
 
 export interface WorkerOutMessage {
   readonly id: string;
   readonly success: boolean;
-  readonly data?: any;
+  readonly data?: unknown;
   readonly error?: {
     readonly code: string;
     readonly message: string;
   };
 }
 
-// In-memory key handle store for the worker thread
-const activeHandles = new Map<string, { network: Network; createdAt: number }>();
-let handleCounter = 1;
+interface RustResponse<T> {
+  readonly status: "ok" | "error";
+  readonly data?: T;
+  readonly code?: string;
+  readonly message?: string;
+}
+
+interface ScannedReceipt {
+  readonly tx_id_hex: string;
+  readonly action_index: number;
+  readonly block_height: number;
+  readonly block_time: number;
+  readonly amount_zatoshis: Receipt["amountZatoshis"];
+  readonly pool: "orchard" | "ironwood";
+}
+
+const activeHandles = new Map<string, Network>();
+let wasmReady: Promise<unknown> | undefined;
+
+function initializeWasm(): Promise<unknown> {
+  wasmReady ??= init();
+  return wasmReady;
+}
+
+function unwrapRustResponse<T>(json: string): T {
+  const response = JSON.parse(json) as RustResponse<T>;
+  if (response.status === "error") {
+    throw {
+      code: response.code ?? "INTERNAL_PROTOCOL_ERROR",
+      message: response.message ?? "The WASM protocol operation failed.",
+    };
+  }
+  if (response.status !== "ok" || response.data === undefined) {
+    throw {
+      code: "INVALID_WASM_RESPONSE",
+      message: "The WASM protocol operation returned an invalid response.",
+    };
+  }
+  return response.data;
+}
+
+function makeReceipt(receipt: ScannedReceipt, network: Network): Receipt {
+  return {
+    id: `rc-${receipt.tx_id_hex}-${receipt.action_index}`,
+    contextId: "",
+    network,
+    pool: receipt.pool,
+    txIdHex: receipt.tx_id_hex,
+    actionIndex: receipt.action_index,
+    recipientAddress: null,
+    amountZatoshis: receipt.amount_zatoshis,
+    blockHeight: receipt.block_height,
+    observedUtc: new Date(receipt.block_time * 1000).toISOString(),
+    evidence: "locally-inspected",
+    memo: { state: "not-requested" },
+  };
+}
 
 self.addEventListener("message", async (event: MessageEvent<WorkerInMessage>) => {
   const { id, type, payload } = event.data;
 
   try {
+    await initializeWasm();
+
     switch (type) {
       case "decode_uivk": {
-        const { rawBytes, network } = payload as { rawBytes: Uint8Array; network: Network };
-        const text = new TextDecoder().decode(rawBytes).trim();
-
-        // Policy boundary enforcement
-        if (text.toLowerCase().startsWith("uview1") || (text.toLowerCase().startsWith("uview") && !text.toLowerCase().startsWith("uviewtest") && !text.toLowerCase().startsWith("uviewregtest"))) {
-          throw {
-            code: "MAINNET_REJECTED",
-            message: "Mainnet encodings are explicitly rejected; Vinca strictly operates on testnet and regtest.",
-          };
-        }
-
-        if (text.toLowerCase().startsWith("ufvk") || text.toLowerCase().startsWith("uviewfull")) {
-          throw {
-            code: "UFVK_REJECTED",
-            message: "Unified Full Viewing Keys (UFVK) are rejected; Vinca accepts incoming viewing keys only.",
-          };
-        }
-
-        if (text.toLowerCase().startsWith("secret") || text.toLowerCase().includes("spend")) {
-          throw {
-            code: "SPENDING_KEY_REJECTED",
-            message: "Spending key material rejected; Vinca accepts incoming viewing keys only.",
-          };
-        }
-
-        // Generate opaque handle (never returns raw key to the main thread)
-        const handle = `vinca-handle-${handleCounter.toString(16).padStart(16, "0")}`;
-        handleCounter++;
-        activeHandles.set(handle, { network, createdAt: Date.now() });
-
-        const result = {
-          handle,
-          network,
-          birthdayHeight: 2500000,
-          retainedPools: ["orchard", "ironwood"] as readonly PoolKind[],
-          declaredUnretained: ["sapling"] as readonly UnsupportedPoolKind[],
-          incomingDecryptionScalarFingerprint: "0x" + Array.from(rawBytes.slice(0, 8)).map(b => b.toString(16).padStart(2, "0")).join(""),
+        const { rawBytes, network } = payload as {
+          rawBytes: Uint8Array;
+          network: Network;
         };
-
-        const response: WorkerOutMessage = { id, success: true, data: result };
-        self.postMessage(response);
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(rawBytes).trim();
+        const decoded = unwrapRustResponse<{
+          handle: string;
+          network: Network;
+          retained_pools: Receipt["pool"][];
+          declared_unretained: string[];
+        }>(
+          dispatch_worker_message(
+            JSON.stringify({
+              action: "decode_key",
+              payload: {
+                raw_key: text,
+                network,
+                label: "Imported context",
+              },
+            }),
+          ),
+        );
+        activeHandles.set(decoded.handle, decoded.network);
+        const data = {
+          handle: decoded.handle,
+          network: decoded.network,
+          retainedPools: decoded.retained_pools,
+          declaredUnretained: decoded.declared_unretained,
+        };
+        self.postMessage({ id, success: true, data } satisfies WorkerOutMessage);
         break;
       }
 
       case "scan_range": {
-        const { handle, range } = payload as { handle: string; range: CoverageRange };
-        if (!activeHandles.has(handle)) {
-          activeHandles.set(handle, { network: "testnet", createdAt: Date.now() });
+        const { handle, range, compactBlocks } = payload as {
+          handle: string;
+          range: CoverageRange;
+          compactBlocks: Uint8Array;
+        };
+        const network = activeHandles.get(handle);
+        if (!network) {
+          throw {
+            code: "HANDLE_NOT_FOUND",
+            message: "The viewing key is not available in this worker session. Re-import the key to scan.",
+          };
         }
-
-        const handleInfo = activeHandles.get(handle);
-        const discovered = [];
-
-        if (handleInfo?.network === "regtest") {
-          if (range.startHeight <= 205 && range.endHeight >= 205) {
-            discovered.push({
-              id: `rc-regtest-205`,
-              network: "regtest" as const,
-              pool: "orchard" as const,
-              amountZatoshis: "1500000000", // 15.00 ZEC
-              txIdHex: "d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f0718",
-              actionIndex: 0,
-              blockHeight: 205,
-              evidence: "locally-inspected" as const,
-              memo: {
-                state: "available" as const,
-                format: "text" as const,
-                text: "Regtest genesis disbursement: grant tranche 1",
-              },
-            });
-          }
-          if (range.startHeight <= 238 && range.endHeight >= 238) {
-            discovered.push({
-              id: `rc-regtest-238`,
-              network: "regtest" as const,
-              pool: "orchard" as const,
-              amountZatoshis: "250000000", // 2.50 ZEC
-              txIdHex: "f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f0718293a",
-              actionIndex: 0,
-              blockHeight: 238,
-              evidence: "locally-inspected" as const,
-              memo: {
-                state: "not-requested" as const,
-              },
-            });
-          }
-        }
-        const { compactBlocks } = payload as { compactBlocks?: Uint8Array };
-        if (compactBlocks && compactBlocks.length > 0) {
-          // Parse length-delimited protobuf compact blocks from the relay
-          try {
-            let offset = 0;
-            while (offset + 4 <= compactBlocks.length) {
-              const blockLen =
-                (compactBlocks[offset] << 24) |
-                (compactBlocks[offset + 1] << 16) |
-                (compactBlocks[offset + 2] << 8) |
-                compactBlocks[offset + 3];
-              offset += 4;
-              if (blockLen <= 0 || offset + blockLen > compactBlocks.length) break;
-              offset += blockLen;
-            }
-          } catch {
-            // Malformed block stream handled safely
-          }
-        }
-
-        const result = {
+        const scanned = unwrapRustResponse<ScannedReceipt[]>(
+          scan_compact_blocks(
+            handle,
+            range.startHeight,
+            range.endHeight,
+            compactBlocks,
+          ),
+        );
+        const data = {
           inspectedRange: range,
-          decryptedReceipts: discovered,
+          decryptedReceipts: scanned.map((receipt) => makeReceipt(receipt, network)),
           reorgDetected: false,
         };
-
-        const response: WorkerOutMessage = { id, success: true, data: result };
-        self.postMessage(response);
+        self.postMessage({ id, success: true, data } satisfies WorkerOutMessage);
         break;
       }
 
       case "decrypt_memo": {
         const { handle } = payload as { handle: string };
         if (!activeHandles.has(handle)) {
-          throw { code: "HANDLE_NOT_FOUND", message: `Opaque handle '${handle}' not found or revoked.` };
+          throw {
+            code: "HANDLE_NOT_FOUND",
+            message: "The viewing key is not available in this worker session. Re-import the key to inspect.",
+          };
         }
-
-        const result = {
-          format: "text",
-          text: "Invoice #1042 — settlement verified",
+        throw {
+          code: "INSPECTION_UNAVAILABLE",
+          message: "Memo decryption is unavailable until full transaction parsing is implemented.",
         };
-
-        const response: WorkerOutMessage = { id, success: true, data: result };
-        self.postMessage(response);
-        break;
       }
 
       case "destroy_handle": {
         const { handle } = payload as { handle: string };
+        unwrapRustResponse<boolean>(
+          dispatch_worker_message(
+            JSON.stringify({
+              action: "revoke_handle",
+              payload: { handle },
+            }),
+          ),
+        );
         activeHandles.delete(handle);
-        const response: WorkerOutMessage = { id, success: true };
-        self.postMessage(response);
+        self.postMessage({ id, success: true } satisfies WorkerOutMessage);
         break;
       }
 
-      default: {
-        throw { code: "UNKNOWN_TYPE", message: `Unknown worker request type: ${type}` };
-      }
+      default:
+        throw {
+          code: "UNKNOWN_TYPE",
+          message: `Unknown worker request type: ${type}`,
+        };
     }
-  } catch (err: any) {
+  } catch (error) {
+    const err = error as { code?: string; message?: string };
     const response: WorkerOutMessage = {
       id,
       success: false,
       error: {
-        code: err?.code ?? "INTERNAL_ERROR",
-        message: err?.message ?? String(err),
+        code: err.code ?? "INTERNAL_ERROR",
+        message: err.message ?? String(error),
       },
     };
     self.postMessage(response);

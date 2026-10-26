@@ -6,8 +6,6 @@
 import type {
   CoverageRange,
   Network,
-  PoolKind,
-  UnsupportedPoolKind,
 } from "@/types";
 import type {
   OpaqueKeyHandle,
@@ -26,7 +24,18 @@ export class VincaWorkerClient implements VincaWorkerPort {
     if (workerInstance) {
       this.worker = workerInstance;
       this.worker.addEventListener("message", this.handleMessage.bind(this));
+      this.worker.addEventListener("error", this.handleWorkerError.bind(this));
     }
+  }
+
+  private handleWorkerError(event: ErrorEvent): void {
+    const error = new Error(
+      `The WebAssembly inspection worker failed: ${event.message || "unknown worker error"}`,
+    );
+    for (const pending of this.pendingRequests.values()) {
+      pending.reject(error);
+    }
+    this.pendingRequests.clear();
   }
 
   private handleMessage(event: MessageEvent): void {
@@ -45,102 +54,27 @@ export class VincaWorkerClient implements VincaWorkerPort {
   private sendRequest<T>(type: string, payload: any): Promise<T> {
     const id = `req-${this.requestIdCounter++}`;
 
-    // If real worker is not available (e.g. in test environment), execute direct simulated contract
     if (!this.worker) {
-      return this.executeDirectSimulation<T>(type, payload);
+      return Promise.reject(
+        new Error(
+          "[WORKER_UNAVAILABLE] The WebAssembly inspection worker could not be started; no live data was inspected.",
+        ),
+      );
     }
 
     return new Promise<T>((resolve, reject) => {
       this.pendingRequests.set(id, { resolve, reject });
-      this.worker!.postMessage({ id, type, payload });
-    });
-  }
-
-  private executeDirectSimulation<T>(type: string, payload: any): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      switch (type) {
-        case "decode_uivk": {
-          const { rawBytes, network } = payload;
-          const text = new TextDecoder().decode(rawBytes).trim();
-
-          if (text.toLowerCase().startsWith("uview1") || (text.toLowerCase().startsWith("uview") && !text.toLowerCase().startsWith("uviewtest") && !text.toLowerCase().startsWith("uviewregtest"))) {
-            return reject(new Error("[MAINNET_REJECTED] Mainnet encodings are explicitly rejected."));
-          }
-          if (text.toLowerCase().startsWith("ufvk")) {
-            return reject(new Error("[UFVK_REJECTED] Unified Full Viewing Keys are rejected."));
-          }
-          if (text.toLowerCase().startsWith("secret")) {
-            return reject(new Error("[SPENDING_KEY_REJECTED] Spending keys are rejected."));
-          }
-
-          const res: WorkerDecodedKeyResult = {
-            handle: `vinca-handle-sim-${Date.now().toString(16)}` as OpaqueKeyHandle,
-            network,
-            birthdayHeight: 2500000,
-            retainedPools: ["orchard", "ironwood"] as readonly PoolKind[],
-            declaredUnretained: ["sapling"] as readonly UnsupportedPoolKind[],
-            incomingDecryptionScalarFingerprint: "0xsimulated00",
-          };
-          return resolve(res as unknown as T);
+      try {
+        const worker = this.worker;
+        if (!worker) {
+          this.pendingRequests.delete(id);
+          reject(new Error("[WORKER_UNAVAILABLE] The WebAssembly inspection worker stopped."));
+          return;
         }
-
-        case "scan_range": {
-          const { range } = payload;
-          const discovered: any[] = [];
-          if (range.startHeight <= 205 && range.endHeight >= 205) {
-            discovered.push({
-              id: `rc-regtest-205`,
-              network: "regtest",
-              pool: "orchard",
-              amountZatoshis: "1500000000",
-              txIdHex: "d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f0718",
-              actionIndex: 0,
-              blockHeight: 205,
-              evidence: "locally-inspected",
-              memo: {
-                state: "available",
-                format: "text",
-                text: "Regtest genesis disbursement: grant tranche 1",
-              },
-            });
-          }
-          if (range.startHeight <= 238 && range.endHeight >= 238) {
-            discovered.push({
-              id: `rc-regtest-238`,
-              network: "regtest",
-              pool: "orchard",
-              amountZatoshis: "250000000",
-              txIdHex: "f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f0718293a",
-              actionIndex: 0,
-              blockHeight: 238,
-              evidence: "locally-inspected",
-              memo: {
-                state: "not-requested",
-              },
-            });
-          }
-          const res: WorkerScanResult = {
-            inspectedRange: range,
-            decryptedReceipts: discovered,
-            reorgDetected: false,
-          };
-          return resolve(res as unknown as T);
-        }
-
-        case "decrypt_memo": {
-          const res: WorkerDecryptedMemoResult = {
-            format: "text",
-            text: "Invoice #1042 — settlement verified",
-          };
-          return resolve(res as unknown as T);
-        }
-
-        case "destroy_handle": {
-          return resolve(undefined as unknown as T);
-        }
-
-        default:
-          return reject(new Error(`Unknown type: ${type}`));
+        worker.postMessage({ id, type, payload });
+      } catch (error) {
+        this.pendingRequests.delete(id);
+        reject(error);
       }
     });
   }
@@ -172,12 +106,11 @@ export function getWorkerClient(): VincaWorkerClient {
         worker = new Worker(new URL("../workers/inspection.worker.ts", import.meta.url), {
           type: "module",
         });
-      } catch {
-        // Fallback to direct simulation
+      } catch (error) {
+        console.error("Unable to create the Vinca inspection worker.", error);
       }
     }
     _workerInstance = new VincaWorkerClient(worker);
   }
   return _workerInstance;
 }
-

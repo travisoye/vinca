@@ -48,6 +48,6 @@ export const SNAPSHOT_EXPLANATION =
 
 export const CLOSING_COPY = {
   title: "Open the dashboard when you are ready.",
-  body: "Explore the fixture-backed dashboard to review sample contexts and received records without supplying private material. Real key import, live scanning and encrypted exports are not connected in this preview.",
+  body: "Explore the dashboard's labelled sample records, or create an encrypted workspace to import a supported testnet incoming viewing key and inspect public blocks locally.",
   actionLabel: "Open dashboard",
 } as const;

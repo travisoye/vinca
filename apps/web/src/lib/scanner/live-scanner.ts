@@ -53,6 +53,9 @@ export interface ScanResult {
   readonly rollbackHeight?: number;
 }
 
+const MAX_BLOCKS_PER_CHUNK = 1_000;
+const SCANNER_VERSION = 1;
+
 export class LiveScanner {
   constructor(
     private readonly relay: VincaRelayPort,
@@ -70,14 +73,17 @@ export class LiveScanner {
     options?: ScanOptions,
   ): Promise<ScanResult> {
     const tipHeight = options?.targetHeight ?? (await this.relay.getTipHeight(context.network));
-    let startHeight = (context.coverage.lastScannedHeight ?? context.birthdayHeight - 1) + 1;
-
-    // If context has 0 receipts recorded and is already marked at tip, allow a rescan from birthday
-    if (startHeight > tipHeight && existingReceipts.filter((r) => r.contextId === context.id).length === 0) {
-      startHeight = context.birthdayHeight;
-    }
+    let startHeight =
+      context.coverage.scannerVersion === SCANNER_VERSION
+        ? (context.coverage.lastScannedHeight ?? context.birthdayHeight - 1) + 1
+        : context.birthdayHeight;
 
     if (startHeight > tipHeight) {
+      if (context.coverage.scannerVersion !== SCANNER_VERSION) {
+        throw new Error(
+          "The context birthday is above the reported chain tip; no scan coverage was updated.",
+        );
+      }
       // Already fully synchronized
       return {
         updatedContext: {
@@ -94,11 +100,20 @@ export class LiveScanner {
       };
     }
 
-    const chunkSize = Math.min(options?.chunkSize ?? 2000, 5000);
+    if (
+      options?.chunkSize !== undefined &&
+      (!Number.isSafeInteger(options.chunkSize) || options.chunkSize < 1)
+    ) {
+      throw new Error("Scan chunk size must be a positive safe integer.");
+    }
+    const chunkSize = Math.min(options?.chunkSize ?? MAX_BLOCKS_PER_CHUNK, MAX_BLOCKS_PER_CHUNK);
     let currentHeight = startHeight;
     let accumulatedReceipts: Receipt[] = [...existingReceipts];
     let newDiscoveredReceipts: Receipt[] = [];
-    let updatedRanges: CoverageRange[] = [...context.coverage.scannedRanges];
+    let updatedRanges: CoverageRange[] =
+      context.coverage.scannerVersion === SCANNER_VERSION
+        ? [...context.coverage.scannedRanges]
+        : [];
     let reorgOccurred = false;
     let rollbackHeight: number | undefined;
 
@@ -194,6 +209,7 @@ export class LiveScanner {
         lastScannedHeight: tipHeight,
         tipHeight,
         stale: false,
+        scannerVersion: SCANNER_VERSION,
         reorgNotice: reorgOccurred
           ? {
               rollbackHeight: rollbackHeight ?? startHeight,

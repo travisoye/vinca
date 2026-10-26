@@ -677,14 +677,14 @@ export function DocsPage() {
                       Run the CLI export command requesting the incoming viewing key for testnet or regtest:
                     </p>
                     <CodeBlock
-                      code="zallet-cli export-uivk --network testnet --account 0 > account0_uivk.txt"
+                      code="Export the account's Unified Incoming Viewing Key using your wallet's documented export procedure."
                       language="bash"
                       filename="Terminal Command"
                     />
                     <div className="mt-3 space-y-1 text-xs text-muted-foreground">
                       <p>✓ Exports a standard ZIP 316 UIVK with Orchard and Sapling components.</p>
                       <p>✓ Vinca retains the Orchard component and logs Sapling as declared unretained.</p>
-                      <p>✓ Prefix begins with <code className="font-mono text-primary font-semibold">uviewtest1...</code></p>
+                      <p>✓ Testnet UIVK prefixes are <code className="font-mono text-primary font-semibold">uivktest1...</code> (ZIP-316 revision 0) or <code className="font-mono text-primary font-semibold">uvitest1...</code> (revision 2).</p>
                     </div>
                   </div>
                 </TabsContent>
@@ -743,7 +743,7 @@ export function DocsPage() {
                       <div className="flex items-start gap-2">
                         <span className="font-bold text-foreground">Step 3:</span>
                         <span>
-                          Verify that the Bech32 prefix begins with <code className="font-mono text-primary font-semibold">uviewtest1</code>.
+                          Verify that the exported UIVK begins with <code className="font-mono text-primary font-semibold">uivktest1</code> (ZIP-316 revision 0) or <code className="font-mono text-primary font-semibold">uvitest1</code> (revision 2).
                         </span>
                       </div>
                     </div>

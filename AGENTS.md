@@ -70,24 +70,32 @@ vinca/
       __tests__/                  written test specs (do not execute unless authorised)
 ```
 
-Planned but not yet created: `crates/vinca-core`, `crates/vinca-wasm`,
-`services/chain-relay`, `fixtures/`, `scripts/`, root `README.md`.
+Additional implementation locations:
+
+```
+  crates/vinca-core/              Rust protocol parsing and note decryption
+  crates/vinca-wasm/              WASM worker API and opaque key storage
+  services/chain-relay/            Public testnet compact-block relay
+  README.md                        Project guide and operational status
+```
 
 ## Current status
 
-- Phase 1 (frontend foundation): source complete.
-- Phase 2 (landing + public content): source complete.
-- Phase 3 (dashboard + sample workflows): source complete.
-- Phase 4 (frontend completion & handoff gate): **source complete**.
-- Phase 5 (Rust core + WASM worker): **next**.
-- Validation: only the authorised demo run has executed (module compile checks
-  via the dev server). Tests, typecheck and production build have not run.
+- Phases 1–10: source complete; see `implementation docs/projectcontext.md`
+  and `implementation docs/prd.md` for the evidence ledger.
+- Testnet scanning follow-up: ZIP-316 UIVK decoding and Orchard-family compact
+  block trial decryption are wired through the browser WASM worker. Focused Rust
+  and frontend tests, typecheck, WASM build, and production build passed on
+  2026-10-26.
+- Not verified: no scan with the user's key was performed, and no receipt is
+  confirmed. Production deployment has not been authorized.
 
 ## Work protocol
 
 1. Read the two documents above; confirm the validation-freeze status.
 2. Work only on the first phase marked not started in the PRD, in its documented
-   order.
+   order; if all phases are complete, handle only the user's explicitly
+   requested follow-up.
 3. Write tests for every phase, but do not execute them while frozen.
 4. At the end of a phase, update **both**:
    - `prd.md`: phase checkboxes, §10 ledger row, document log entry.

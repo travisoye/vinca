@@ -11,7 +11,10 @@ use crate::errors::{Result, VincaError};
 use crate::types::{
     ComponentSummary, ContextSummary, Network, PoolKind, RetainedOrchardKey,
 };
-use bech32::{primitives::decode::CheckedHrpstring, Bech32m, Hrp};
+use orchard::keys::IncomingViewingKey;
+use zcash_address::unified::{Container, Encoding, Ivk, Revision, Uitem, Uivk};
+use zcash_protocol::consensus::NetworkType;
+use zeroize::Zeroize;
 
 /// Maximum allowable length in bytes for key strings to prevent resource exhaustion.
 pub const MAX_UIVK_INPUT_BYTES: usize = 4096;
@@ -50,58 +53,64 @@ pub fn decode_uivk(raw_str: &str, expected_network: Network, handle: String, lab
             "Detected potential spending key or seed prefix".into(),
         ));
     }
-    if lower.starts_with("ufvk") || lower.starts_with("uviewfull") {
+    if lower.starts_with("uview") || lower.starts_with("uvf") || lower.starts_with("ufvk") {
         return Err(VincaError::FullViewingKeyRejected(
             "Detected Unified Full Viewing Key (UFVK); Vinca requires incoming viewing keys only".into(),
         ));
     }
 
-    // 3. Reject mainnet HRP
-    if lower.starts_with("uview1") || lower.starts_with("uview") && !lower.starts_with("uviewtest") && !lower.starts_with("uviewregtest") {
+    // 3. Reject mainnet UIVK prefixes. Testnet and regtest prefixes are
+    // checked by the ZIP-316 decoder below.
+    if lower.starts_with("uivk1") || lower.starts_with("uvi1") {
         return Err(VincaError::MainnetRejected(
-            "Mainnet HRP 'uview' rejected; Vinca strictly operates on testnet and regtest".into(),
+            "Mainnet UIVK encoding rejected; Vinca strictly operates on testnet and regtest".into(),
         ));
     }
 
-    // 4. Verify expected network HRP
-    let expected_hrp = expected_network.hrp_prefix();
-    if !lower.starts_with(expected_hrp) {
+    // ZIP-316 decoding validates the Bech32m encoding, revision-specific
+    // jumbling, TLV structure, and the network encoded by the key.
+    let (actual_network, _revision, uivk) = Uivk::decode(trimmed)
+        .map_err(|e| VincaError::InvalidEncoding(format!("ZIP-316 UIVK decoding failed: {e}")))?;
+    let key_network = match actual_network {
+        NetworkType::Main => {
+            return Err(VincaError::MainnetRejected(
+                "Mainnet UIVK encoding rejected; Vinca strictly operates on testnet and regtest".into(),
+            ));
+        }
+        NetworkType::Test => Network::Testnet,
+        NetworkType::Regtest => Network::Regtest,
+    };
+    if key_network != expected_network {
         return Err(VincaError::InvalidEncoding(format!(
-            "Key HRP did not match expected network '{}' (expected '{}')",
-            expected_network.hrp_prefix(),
-            expected_hrp
+            "Key network '{}' did not match selected network '{}'",
+            key_network.as_str(),
+            expected_network.as_str()
         )));
     }
-
-    // 5. Decode Bech32m
-    let checked = CheckedHrpstring::new::<Bech32m>(trimmed).map_err(|e| {
-        VincaError::InvalidEncoding(format!("Bech32m decoding failed: {:?}", e))
-    })?;
-
-    if checked.hrp().as_str() != expected_hrp {
-        return Err(VincaError::InvalidEncoding(format!(
-            "Mismatched HRP: found '{}', expected '{}'",
-            checked.hrp().as_str(),
-            expected_hrp
-        )));
-    }
-
-    let payload: Vec<u8> = checked.byte_iter().collect();
-    if payload.is_empty() {
-        return Err(VincaError::InvalidEncoding("Decoded payload is empty".into()));
-    }
-
-    // 6. Parse TLV components (ZIP 316)
-    let raw_components = parse_tlv_components(&payload)?;
 
     let mut retained_orchard: Option<RetainedOrchardKey> = None;
+    let mut raw_components = Vec::new();
     let mut component_summaries = Vec::new();
     let mut unretained_components = Vec::new();
 
-    for comp in &raw_components {
+    for item in uivk.items_as_parsed() {
+        let component = match item {
+            Uitem::Data(Ivk::Orchard(data)) => Some((0x03, data.to_vec())),
+            Uitem::Data(Ivk::Sapling(data)) => Some((0x02, data.to_vec())),
+            Uitem::Data(Ivk::P2pkh(data)) => Some((0x00, data.to_vec())),
+            Uitem::Data(Ivk::P2sh(data)) => Some((0x01, data.to_vec())),
+            Uitem::Data(Ivk::Unknown { typecode, .. }) => {
+                return Err(VincaError::UnknownComponent(*typecode));
+            }
+            Uitem::Metadata(_) => None,
+        };
+        let Some((type_code, data)) = component else {
+            continue;
+        };
+        let comp = RawTlvComponent { type_code, data };
+
         match comp.type_code {
             0x03 => {
-                // Orchard Incoming Viewing Key: 64 bytes (32 bytes dk, 32 bytes ivk)
                 if comp.data.len() != 64 {
                     return Err(VincaError::MalformedComponent(format!(
                         "Orchard component length is {}, expected 64 bytes",
@@ -112,6 +121,20 @@ pub fn decode_uivk(raw_str: &str, expected_network: Network, handle: String, lab
                 let mut ivk = [0u8; 32];
                 dk.copy_from_slice(&comp.data[0..32]);
                 ivk.copy_from_slice(&comp.data[32..64]);
+                let mut encoded = [0u8; 64];
+                encoded.copy_from_slice(&comp.data);
+                let valid = Option::<IncomingViewingKey>::from(
+                    IncomingViewingKey::from_bytes(&encoded),
+                )
+                .is_some();
+                encoded.zeroize();
+                if !valid {
+                    dk.zeroize();
+                    ivk.zeroize();
+                    return Err(VincaError::MalformedComponent(
+                        "Orchard incoming viewing key is invalid".into(),
+                    ));
+                }
 
                 retained_orchard = Some(RetainedOrchardKey { dk, ivk });
                 component_summaries.push(ComponentSummary {
@@ -159,6 +182,7 @@ pub fn decode_uivk(raw_str: &str, expected_network: Network, handle: String, lab
                 return Err(VincaError::UnknownComponent(other));
             }
         }
+        raw_components.push(comp);
     }
 
     let orchard_key = retained_orchard.ok_or(VincaError::NoRetainedComponents)?;
@@ -181,81 +205,24 @@ pub fn decode_uivk(raw_str: &str, expected_network: Network, handle: String, lab
     })
 }
 
-/// Helper to parse ZIP 316 TLV encoding.
-fn parse_tlv_components(payload: &[u8]) -> Result<Vec<RawTlvComponent>> {
-    let mut components = Vec::new();
-    let mut cursor = 0;
-
-    while cursor < payload.len() {
-        let (type_code, bytes_read) = read_compact_size(&payload[cursor..])?;
-        cursor += bytes_read;
-
-        if cursor >= payload.len() {
-            return Err(VincaError::MalformedComponent(
-                "Truncated component length field".into(),
-            ));
-        }
-
-        let (length, bytes_read) = read_compact_size(&payload[cursor..])?;
-        cursor += bytes_read;
-
-        let len_usize = length as usize;
-        if cursor + len_usize > payload.len() {
-            return Err(VincaError::MalformedComponent(format!(
-                "Component declares {} bytes, but only {} bytes remain",
-                len_usize,
-                payload.len() - cursor
-            )));
-        }
-
-        let data = payload[cursor..cursor + len_usize].to_vec();
-        cursor += len_usize;
-
-        components.push(RawTlvComponent { type_code, data });
-    }
-
-    Ok(components)
-}
-
-/// Reads a Bitcoin/Zcash CompactSize integer.
-fn read_compact_size(slice: &[u8]) -> Result<(u32, usize)> {
-    if slice.is_empty() {
-        return Err(VincaError::MalformedComponent("Empty compact size".into()));
-    }
-    match slice[0] {
-        253 => {
-            if slice.len() < 3 {
-                return Err(VincaError::MalformedComponent("Truncated 2-byte compact size".into()));
-            }
-            let val = u16::from_le_bytes([slice[1], slice[2]]) as u32;
-            Ok((val, 3))
-        }
-        254 => {
-            if slice.len() < 5 {
-                return Err(VincaError::MalformedComponent("Truncated 4-byte compact size".into()));
-            }
-            let val = u32::from_le_bytes([slice[1], slice[2], slice[3], slice[4]]);
-            Ok((val, 5))
-        }
-        255 => Err(VincaError::MalformedComponent(
-            "8-byte compact size unsupported in component headers".into(),
-        )),
-        val => Ok((val as u32, 1)),
-    }
-}
-
 /// Encodes an Orchard-only UIVK string for test vectors.
 pub fn encode_uivk_testnet(dk: &[u8; 32], ivk: &[u8; 32]) -> Result<String> {
-    let mut payload = Vec::new();
-    // Type 0x03
-    payload.push(0x03);
-    // Length 64
-    payload.push(64);
-    payload.extend_from_slice(dk);
-    payload.extend_from_slice(ivk);
+    let mut encoded = [0u8; 64];
+    encoded[..32].copy_from_slice(dk);
+    encoded[32..].copy_from_slice(ivk);
+    if Option::<IncomingViewingKey>::from(IncomingViewingKey::from_bytes(&encoded)).is_none() {
+        encoded.zeroize();
+        return Err(VincaError::MalformedComponent(
+            "Orchard incoming viewing key is invalid".into(),
+        ));
+    }
 
-    let hrp = Hrp::parse("uviewtest").map_err(|e| VincaError::InvalidEncoding(format!("{:?}", e)))?;
-    let bech = bech32::encode::<Bech32m>(hrp, &payload)
-        .map_err(|e| VincaError::InvalidEncoding(format!("{:?}", e)))?;
-    Ok(bech)
+    let container_result = Uivk::try_from_items(
+        Revision::R0,
+        vec![Uitem::Data(Ivk::Orchard(encoded))],
+    );
+    encoded.zeroize();
+    let container = container_result
+        .map_err(|e| VincaError::InvalidEncoding(format!("ZIP-316 encoding failed: {e}")))?;
+    Ok(container.encode(&NetworkType::Test))
 }

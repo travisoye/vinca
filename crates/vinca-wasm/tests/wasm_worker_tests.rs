@@ -3,9 +3,13 @@
 
 use vinca_core::encode_uivk_testnet;
 use vinca_wasm::worker_api::{handle_request, WorkerRequest, WorkerResponse};
+use std::sync::Mutex;
+
+static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn test_wasm_worker_decode_and_opaque_handle_lifecycle() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
     let dk = [0x12u8; 32];
     let ivk = [0x34u8; 32];
     let raw_key = encode_uivk_testnet(&dk, &ivk).expect("Encoding failed");
@@ -37,7 +41,12 @@ fn test_wasm_worker_decode_and_opaque_handle_lifecycle() {
         pk_d_hex: "00".repeat(32),
     };
     let val_res = handle_request(val_req);
-    assert!(matches!(val_res, WorkerResponse::Ok { .. }));
+    match val_res {
+        WorkerResponse::Ok { .. } => {}
+        WorkerResponse::Error { code, message } => {
+            panic!("Receiver validation failed: [{code}] {message}");
+        }
+    }
 
     // 3. RevokeHandle
     let revoke_req = WorkerRequest::RevokeHandle {
@@ -63,8 +72,9 @@ fn test_wasm_worker_decode_and_opaque_handle_lifecycle() {
 
 #[test]
 fn test_wasm_worker_lock_workspace_clears_handles() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
     let dk = [0x55u8; 32];
-    let ivk = [0x66u8; 32];
+    let ivk = [0x06u8; 32];
     let raw_key = encode_uivk_testnet(&dk, &ivk).expect("Encoding failed");
 
     let req = WorkerRequest::DecodeKey {
@@ -75,7 +85,9 @@ fn test_wasm_worker_lock_workspace_clears_handles() {
     let res = handle_request(req);
     let handle = match res {
         WorkerResponse::Ok { data } => data.get("handle").unwrap().as_str().unwrap().to_string(),
-        _ => panic!("Decode failed"),
+        WorkerResponse::Error { code, message } => {
+            panic!("Decode failed: [{code}] {message}");
+        }
     };
 
     // Lock workspace

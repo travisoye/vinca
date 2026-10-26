@@ -5,7 +5,10 @@
   "type": "module",
   "description": "Vinca frontend: a browser-based disclosure toolkit for Zcash wallet and payment developers. Presentation foundation only; protocol, vault and relay work happens in later phases per prd.md.",
   "scripts": {
+    "build:wasm": "wasm-pack build ../../crates/vinca-wasm --target web --out-dir ../../apps/web/src/wasm --out-name vinca_wasm --release",
+    "predev": "npm run build:wasm",
     "dev": "vite",
+    "prebuild": "npm run build:wasm",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
@@ -38,9 +41,11 @@
     "tailwindcss": "^4.1.14",
     "typescript": "~5.9.3",
     "vite": "^7.1.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wasm-pack": "^0.15.0"
   },
   "allowScripts": {
-    "esbuild@0.28.2": true
+    "esbuild@0.28.2": true,
+    "wasm-pack@0.15.0": true
   }
 }

@@ -49,6 +49,12 @@ pub enum VincaError {
     #[error("Action count {0} exceeds maximum block bound of {1}")]
     TooManyActions(usize, usize),
 
+    #[error("Invalid compact-block response: {0}")]
+    InvalidCompactBlock(String),
+
+    #[error("Protocol inspection is unavailable: {0}")]
+    InspectionUnavailable(String),
+
     #[error("Note trial decryption failed: {0}")]
     DecryptionFailed(String),
 

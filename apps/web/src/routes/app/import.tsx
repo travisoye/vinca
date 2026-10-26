@@ -44,7 +44,7 @@ export function AppImportPage() {
   const [keyString, setKeyString] = useState("");
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [network, setNetwork] = useState<Network>("testnet");
-  const [birthdayHeight, setBirthdayHeight] = useState("2619000");
+  const [birthdayHeight, setBirthdayHeight] = useState("");
   const [contextLabel, setContextLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
@@ -80,6 +80,7 @@ export function AppImportPage() {
     try {
       setError(null);
       setSelectedFileName(file.name);
+      setBirthdayHeight("");
 
       const rawText = await file.text();
       let extractedKey = rawText.trim();
@@ -113,16 +114,12 @@ export function AppImportPage() {
 
       setKeyString(extractedKey);
 
-      // Auto-detect network and appropriate birthday from key prefix if not already set
+      // The key encoding does not identify the wallet's scan birthday.
       const lower = extractedKey.toLowerCase();
-      if (lower.startsWith("uviewtest")) {
+      if (lower.startsWith("uivktest") || lower.startsWith("uvitest")) {
         setNetwork("testnet");
-        if (birthdayHeight === "201") {
-          setBirthdayHeight("2619000");
-        }
-      } else if (lower.startsWith("uviewregtest")) {
+      } else if (lower.startsWith("uivkregtest") || lower.startsWith("uviregtest")) {
         setNetwork("regtest");
-        setBirthdayHeight("201");
       }
 
       // Auto-populate friendly label if not set
@@ -168,11 +165,16 @@ export function AppImportPage() {
       return;
     }
 
+    const birthdayNum = Number(birthdayHeight);
+    if (!/^[0-9]+$/.test(birthdayHeight) || !Number.isSafeInteger(birthdayNum) || birthdayNum < 1) {
+      setError("Enter the wallet's actual birthday height. Vinca will not guess a scan start height.");
+      return;
+    }
+
     setError(null);
     setIsEvaluating(true);
 
     try {
-      const birthdayNum = parseInt(birthdayHeight, 10) || (network === "testnet" ? 2500000 : 1);
       const candidate: ImportCandidate = {
         id: `cand-${Date.now()}`,
         label: contextLabel.trim() || selectedFileName || `Imported ${network} Key`,
@@ -199,6 +201,7 @@ export function AppImportPage() {
   const handleClear = () => {
     setKeyString("");
     setSelectedFileName(null);
+    setBirthdayHeight("");
     setContextLabel("");
     setError(null);
     if (fileInputRef.current) {
@@ -228,7 +231,7 @@ export function AppImportPage() {
             <KeyRound className="size-4" />
             Live Key File / Text Input
           </TabsTrigger>
-          <TabsTrigger value="catalog">
+          <TabsTrigger value="catalog" disabled={mode === "live"}>
             <FileKey className="size-4" />
             Key Catalog & Preflight
           </TabsTrigger>
@@ -323,11 +326,11 @@ export function AppImportPage() {
                   {/* Direct string paste */}
                   <Field
                     label="Or paste UIVK String directly"
-                    help="Testnet UIVKs begin with 'uviewtest1...'; regtest UIVKs begin with 'uviewregtest1...'."
+                    help="Testnet ZIP-316 UIVKs begin with 'uivktest1...' or 'uvitest1...'; regtest UIVKs begin with 'uivkregtest1...' or 'uviregtest1...'."
                   >
                     <textarea
                       className="flex min-h-[90px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                      placeholder="uviewtest1..."
+                      placeholder="uivktest1..."
                       value={keyString}
                       onChange={(e) => {
                         setKeyString(e.target.value);
@@ -349,12 +352,12 @@ export function AppImportPage() {
                       </select>
                     </Field>
 
-                    <Field label="Scan Birthday Height" help="Recent testnet block (~2,619,000 for fast scanning) or wallet creation block">
+                    <Field label="Scan Birthday Height" help="UIVK files do not contain this; enter the actual wallet birthday height">
                       <Input
                         type="number"
                         value={birthdayHeight}
                         onChange={(e) => setBirthdayHeight(e.target.value)}
-                        placeholder="2619000"
+                        placeholder="Required"
                         min="1"
                       />
                     </Field>

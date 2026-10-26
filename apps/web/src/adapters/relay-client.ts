@@ -13,9 +13,7 @@
   3. Query paths for transactions are only called upon explicit user confirmation
      via the MemoPrivacyDialog.
   4. Bounded responses: maximum block ranges and payload lengths are strictly enforced.
-  5. Offline fallback: When the relay service is not running or unreachable,
-     the client gracefully falls back to deterministic public testnet/regtest data
-     so local development and demonstration workflows remain uninterrupted.
+  5. Relay failures are explicit. Live requests never fall back to synthetic data.
 */
 
 import type { CoverageRange, Network } from "@/types";
@@ -25,6 +23,9 @@ export interface RelayClientConfig {
   readonly baseUrl?: string;
   readonly timeoutMs?: number;
 }
+
+const MAX_COMPACT_BLOCKS_PER_REQUEST = 1_000;
+const MAX_COMPACT_BLOCK_RESPONSE_BYTES = 10 * 1024 * 1024;
 
 export class RelayClient implements VincaRelayPort {
   private readonly baseUrl: string;
@@ -40,42 +41,38 @@ export class RelayClient implements VincaRelayPort {
   }
 
   /**
-   * Health and readiness check. Queries GET /health on the relay.
+   * Readiness check. /health only confirms that the relay process is running;
+   * /ready confirms that its configured upstream can serve chain data.
    */
   async checkHealth(): Promise<RelayHealthReport> {
     const startTime = Date.now();
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), Math.min(this.timeoutMs, 4000));
-
-      const res = await fetch(`${this.baseUrl}/health`, {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-      });
-      clearTimeout(timer);
-
-      if (!res.ok) {
-        return {
-          status: "degraded",
-          upstreamConnected: false,
-          configuredProfiles: ["testnet", "regtest"],
-          latencyMs: Date.now() - startTime,
-        };
-      }
-
+      const res = await this.request(`${this.baseUrl}/ready`, "application/json", true);
       const data = await res.json();
+      const configuredProfiles = Array.isArray(data.configured_networks)
+        ? data.configured_networks.filter(
+            (network: unknown): network is Network =>
+              network === "testnet" || network === "regtest",
+          )
+        : [];
+      const testnetStatus = Array.isArray(data.upstream_status)
+        ? data.upstream_status.find(
+            (status: { network?: unknown }) => status.network === "testnet",
+          )
+        : undefined;
+      const upstreamConnected = testnetStatus?.reachable === true;
+
       return {
-        status: data.status === "healthy" ? "connected" : "degraded",
-        upstreamConnected: Boolean(data.upstream_connected ?? true),
-        configuredProfiles: (data.configured_profiles as Network[]) ?? ["testnet", "regtest"],
+        status: data.status === "ready" && upstreamConnected ? "connected" : "degraded",
+        upstreamConnected,
+        configuredProfiles,
         latencyMs: Date.now() - startTime,
       };
     } catch {
-      // Offline fallback: relay not currently reachable
       return {
         status: "unavailable",
         upstreamConnected: false,
-        configuredProfiles: ["testnet", "regtest"],
+        configuredProfiles: [],
         latencyMs: Date.now() - startTime,
       };
     }
@@ -88,29 +85,13 @@ export class RelayClient implements VincaRelayPort {
   async getTipHeight(network: Network): Promise<number> {
     this.assertValidNetwork(network);
 
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-
-      const res = await fetch(`${this.baseUrl}/tip/${network}`, {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-      });
-      clearTimeout(timer);
-
-      if (res.ok) {
-        const data = await res.json();
-        const height = typeof data.tip_height === "number" ? data.tip_height : data.height;
-        if (typeof height === "number") {
-          return height;
-        }
-      }
-    } catch {
-      // In offline/mock mode, return deterministic tip height
+    const res = await this.request(`${this.baseUrl}/tip/${network}`, "application/json");
+    const data = await res.json();
+    const height = typeof data.tip_height === "number" ? data.tip_height : data.height;
+    if (!Number.isSafeInteger(height) || height < 0) {
+      throw new Error("Relay returned an invalid chain tip.");
     }
-
-    // Deterministic fallback tip heights for testnet/regtest
-    return network === "testnet" ? 2_710_500 : 250;
+    return height;
   }
 
   /**
@@ -125,31 +106,23 @@ export class RelayClient implements VincaRelayPort {
     }
 
     const count = range.endHeight - range.startHeight + 1;
-    if (count > 10_000) {
-      throw new Error(`Requested range too large: ${count} blocks (maximum is 10,000 blocks per request)`);
+    if (count > MAX_COMPACT_BLOCKS_PER_REQUEST) {
+      throw new Error(
+        `Requested range too large: ${count} blocks (maximum is ${MAX_COMPACT_BLOCKS_PER_REQUEST} blocks per request)`,
+      );
     }
 
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-
-      const url = `${this.baseUrl}/blocks/${network}?start=${range.startHeight}&end=${range.endHeight}`;
-      const res = await fetch(url, {
-        signal: controller.signal,
-        headers: { Accept: "application/octet-stream" },
-      });
-      clearTimeout(timer);
-
-      if (res.ok) {
-        const arrayBuf = await res.arrayBuffer();
-        return new Uint8Array(arrayBuf);
-      }
-    } catch {
-      // Fallback in offline environment
+    const url = `${this.baseUrl}/blocks/${network}?start=${range.startHeight}&end=${range.endHeight}`;
+    const res = await this.request(url, "application/octet-stream");
+    const contentLength = Number(res.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > MAX_COMPACT_BLOCK_RESPONSE_BYTES) {
+      throw new Error("Relay compact-block response exceeds the 10 MiB client limit.");
     }
-
-    // Produce synthetic deterministic compact block bytes for testing/mocking
-    return this.generateSyntheticCompactBlocks(range.startHeight, range.endHeight);
+    const body = await res.arrayBuffer();
+    if (body.byteLength > MAX_COMPACT_BLOCK_RESPONSE_BYTES) {
+      throw new Error("Relay compact-block response exceeds the 10 MiB client limit.");
+    }
+    return new Uint8Array(body);
   }
 
   /**
@@ -166,26 +139,37 @@ export class RelayClient implements VincaRelayPort {
       throw new Error(`Invalid transaction ID format: ${txIdHex}`);
     }
 
+    const res = await this.request(
+      `${this.baseUrl}/tx/${network}/${txIdHex.toLowerCase()}`,
+      "application/octet-stream",
+    );
+    return new Uint8Array(await res.arrayBuffer());
+  }
+
+  private async request(
+    url: string,
+    accept: string,
+    allowDegradedReadiness = false,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-
-      const res = await fetch(`${this.baseUrl}/tx/${network}/${txIdHex.toLowerCase()}`, {
+      const response = await fetch(url, {
         signal: controller.signal,
-        headers: { Accept: "application/octet-stream" },
+        headers: { Accept: accept },
       });
-      clearTimeout(timer);
-
-      if (res.ok) {
-        const arrayBuf = await res.arrayBuffer();
-        return new Uint8Array(arrayBuf);
+      if (!response.ok && !(allowDegradedReadiness && response.status === 503)) {
+        throw new Error(`Relay returned HTTP ${response.status}.`);
       }
-    } catch {
-      // Fallback
+      return response;
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Relay returned HTTP")) {
+        throw error;
+      }
+      throw new Error("Relay request failed or timed out; no chain data was returned.");
+    } finally {
+      clearTimeout(timer);
     }
-
-    // Synthetic raw transaction bytes with Orchard action memo field
-    return this.generateSyntheticTransaction(txIdHex);
   }
 
   private assertValidNetwork(network: string): void {
@@ -198,41 +182,6 @@ export class RelayClient implements VincaRelayPort {
     }
   }
 
-  /**
-   * Generates synthetic compact block byte sequence for offline/demo operation.
-   */
-  private generateSyntheticCompactBlocks(start: number, end: number): Uint8Array {
-    const totalBlocks = end - start + 1;
-    // Each synthetic block is represented with header + block height tag
-    const bytesPerBlock = 32;
-    const out = new Uint8Array(totalBlocks * bytesPerBlock);
-    for (let i = 0; i < totalBlocks; i++) {
-      const height = start + i;
-      const offset = i * bytesPerBlock;
-      out[offset] = 0x0a; // protobuf field 1 tag
-      out[offset + 1] = 0x18; // length 24
-      out[offset + 2] = 0x08; // proto field tag height
-      out[offset + 3] = (height & 0x7f) | 0x80;
-      out[offset + 4] = ((height >> 7) & 0x7f) | 0x80;
-      out[offset + 5] = (height >> 14) & 0x7f;
-    }
-    return out;
-  }
-
-  /**
-   * Generates synthetic raw transaction bytes for offline/demo operation.
-   */
-  private generateSyntheticTransaction(txIdHex: string): Uint8Array {
-    const raw = new Uint8Array(256);
-    // Version 5 header
-    raw[0] = 0x05;
-    raw[1] = 0x00;
-    // Copy txid prefix
-    for (let i = 0; i < 32 && i < txIdHex.length / 2; i++) {
-      raw[4 + i] = parseInt(txIdHex.slice(i * 2, i * 2 + 2), 16) || 0;
-    }
-    return raw;
-  }
 }
 
 /** Singleton default relay client */

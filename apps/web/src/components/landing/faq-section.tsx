@@ -71,8 +71,8 @@ function FaqSection() {
             <div className="space-y-1">
               <p className="text-sm font-medium">A preview, not a live wallet.</p>
               <p className="text-sm leading-relaxed text-muted-foreground">
-                This build uses public sample records. Real import, live scanning and encrypted
-                recovery are not connected.
+                The dashboard starts with clearly labelled sample records. Live testnet inspection
+                is available in an unlocked workspace with a supported incoming viewing key.
               </p>
             </div>
           </div>

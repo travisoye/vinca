@@ -74,6 +74,8 @@ export interface CoverageReport {
   /** Current chain tip as reported by the source, when known. */
   readonly tipHeight: number | null;
   readonly stale: boolean;
+  /** Scanner protocol version that produced these ranges; absent on legacy records. */
+  readonly scannerVersion?: number;
   /** Reorganization or rollback notice when chain tip ancestor changes. */
   readonly reorgNotice?: {
     readonly rollbackHeight: number;
@@ -119,7 +121,7 @@ export interface Receipt {
   readonly txIdHex: string;
   /** Index of the output or action within the transaction. */
   readonly actionIndex: number;
-  readonly recipientAddress: string;
+  readonly recipientAddress: string | null;
   readonly amountZatoshis: Zatoshis;
   readonly blockHeight: number;
   /** Best-effort timestamp from the source; null when the source does not provide one. */
