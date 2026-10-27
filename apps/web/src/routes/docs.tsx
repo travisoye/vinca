@@ -496,8 +496,10 @@ export function DocsPage() {
                       <span>3. Encrypted Vault Persistence</span>
                     </div>
                     <p className="text-muted-foreground text-[11px] leading-relaxed">
-                      Discovered receipts are serialized and encrypted using AES-256-GCM (600,000 PBKDF2 iterations)
-                      before committing to IndexedDB. Vault locks automatically after inactivity or explicit lock.
+                      Discovered receipts are serialized and encrypted using AES-256-GCM before committing to
+                      IndexedDB. The workspace opens automatically in this browser profile; there is no
+                      passphrase unlock or auto-lock. Anyone with access to this browser profile can read the
+                      stored records, so treat browser profile access as equivalent to workspace access.
                     </p>
                   </div>
                 </div>
@@ -818,7 +820,7 @@ export function DocsPage() {
                     <CardContent className="space-y-2 text-xs text-muted-foreground">
                       <p>
                         An encrypted snapshot of the local workspace and its read-only inventory. It recovers
-                        records, never wallet spending authority. Requires pass-phrase to unlock.
+                        records, never wallet spending authority. No passphrase required.
                       </p>
                     </CardContent>
                   </Card>
@@ -923,11 +925,11 @@ export function DocsPage() {
                   </p>
                   <CodeBlock
                     code={`export interface VincaVaultPort {
-  initializeVault(passphrase: string): Promise<void>;
-  unlockVault(passphrase: string): Promise<boolean>;
+  openWorkspace(): Promise<void>;
+  clearWorkspace(): Promise<void>;
   saveEncryptedContext(context: ContextSummary, payload: Uint8Array): Promise<void>;
-  exportRecoveryBackup(passphrase: string): Promise<RecoveryBackupBundle>;
-  importRecoveryBackup(bundle: RecoveryBackupBundle, passphrase: string): Promise<RecoveryRestoreResult>;
+  exportRecoveryBackup(): Promise<RecoveryBackupBundle>;
+  importRecoveryBackup(bundle: RecoveryBackupBundle): Promise<RecoveryRestoreResult>;
 }`}
                     language="typescript"
                     filename="adapters/types.ts"
@@ -1063,7 +1065,7 @@ export function DocsPage() {
               <div className="space-y-1">
                 <h3 className="text-lg font-medium text-foreground">Ready to try Vinca?</h3>
                 <p className="text-xs text-muted-foreground">
-                  Explore sample testnet viewing keys or unlock your browser workspace.
+                  Explore sample testnet viewing keys or open your browser workspace.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-3">

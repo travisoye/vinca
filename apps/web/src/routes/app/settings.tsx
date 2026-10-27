@@ -42,7 +42,6 @@ export function SettingsPage() {
     storageStats,
     exportRecoveryBackup,
     importRecoveryBackup,
-    lock,
   } = useWorkspace();
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [recoveryExported, setRecoveryExported] = useState(false);
@@ -404,13 +403,6 @@ export function SettingsPage() {
               Resetting will clear your IndexedDB vault and return the workspace to a fresh state. This cannot be undone.
             </CardContent>
             <CardFooter className="flex flex-col gap-2 border-t border-border pt-4">
-              <Button
-                variant="outline"
-                onClick={lock}
-                className="w-full"
-              >
-                Lock workspace immediately
-              </Button>
               <Button
                 variant="destructive"
                 onClick={() => setResetDialogOpen(true)}

@@ -7,8 +7,9 @@
     • VincaRelayPort (via getRelayClient() from adapters/relay-client.ts)
     • LiveScanner (from lib/scanner/live-scanner.ts)
 
-  Always live mode: encrypted IndexedDB persistence via PBKDF2/AES-256-GCM AEAD,
-  local WASM trial decryption, and public relay compact block range queries.
+  Always live mode: browser-local encrypted workspace, local WASM trial
+  decryption, and public relay compact block range queries. There is no workspace
+  lock or unlock. The workspace is automatically available in this browser.
   No demo/synthetic shortcuts — all connections are real live testnet/regtest.
 */
 
@@ -27,7 +28,6 @@ import type {
   DisclosureHistoryItem,
   MemoData,
   Receipt,
-  WorkspacePhase,
 } from "@/types";
 import type {
   OpaqueKeyHandle,
@@ -53,8 +53,9 @@ export interface StorageStats {
 }
 
 export interface WorkspaceContextValue {
-  readonly phase: WorkspacePhase;
   readonly mode: "live";
+  readonly storageStatus: "opening" | "ready" | "error";
+  readonly storageError: string | null;
   readonly contexts: readonly ContextSummary[];
   readonly receipts: readonly Receipt[];
   readonly disclosureHistory: readonly DisclosureHistoryItem[];
@@ -62,9 +63,6 @@ export interface WorkspaceContextValue {
   readonly relayConnected: boolean | null;
   readonly isScanning: boolean;
   readonly scanProgress: ScanProgressUpdate | null;
-  unlock: (passphrase: string) => Promise<boolean>;
-  lock: () => Promise<void>;
-  createVault: (passphrase: string) => Promise<boolean>;
   addImportedCandidate: (
     candidate: ImportCandidate,
     customLabel?: string,
@@ -95,7 +93,8 @@ export function WorkspaceProvider({
 }: {
   children: ReactNode;
 }) {
-  const [phase, setPhase] = useState<WorkspacePhase>("locked");
+  const [storageStatus, setStorageStatus] = useState<"opening" | "ready" | "error">("opening");
+  const [storageError, setStorageError] = useState<string | null>(null);
   const [contexts, setContexts] = useState<readonly ContextSummary[]>([]);
   const [receipts, setReceipts] = useState<readonly Receipt[]>([]);
   const [disclosureHistory, setDisclosureHistory] = useState<readonly DisclosureHistoryItem[]>([]);
@@ -105,7 +104,7 @@ export function WorkspaceProvider({
   // Active handles map: contextId -> OpaqueKeyHandle held in worker memory
   const activeHandlesRef = useRef<Map<string, OpaqueKeyHandle>>(new Map());
 
-  // Request generation: invalidates in-flight memo work on lock/reset/delete/navigation
+  // Request generation: invalidates in-flight memo work on reset/delete/navigation
   const requestGenerationRef = useRef(0);
 
   // Instantiate singleton services
@@ -115,6 +114,37 @@ export function WorkspaceProvider({
   const scannerRef = useRef<LiveScanner>(new LiveScanner(relay, worker, vault));
 
   const [relayConnected, setRelayConnected] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    void vault
+      .openWorkspace()
+      .then(async () => {
+        if (!mounted) return;
+        const [loadedContexts, loadedReceipts] = await Promise.all([
+          vault.loadAllContexts(),
+          vault.loadAllReceipts(),
+        ]);
+        if (!mounted) return;
+        setContexts(loadedContexts);
+        setReceipts(loadedReceipts);
+        setStorageStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (mounted) {
+          setStorageError(error instanceof Error ? error.message : "Could not open local workspace storage.");
+          setStorageStatus("error");
+        }
+      });
+    return () => {
+      mounted = false;
+      requestGenerationRef.current += 1;
+      for (const handle of activeHandlesRef.current.values()) {
+        void worker.destroyHandle(handle).catch(() => {});
+      }
+      activeHandlesRef.current.clear();
+    };
+  }, [vault, worker]);
 
   useEffect(() => {
     let mounted = true;
@@ -132,63 +162,6 @@ export function WorkspaceProvider({
   }, [relay]);
 
   /**
-   * Unlocks the workspace against the encrypted vault in IndexedDB.
-   * Always live mode — no demo shortcut.
-   */
-  const unlock = useCallback(
-    async (passphrase: string): Promise<boolean> => {
-      requestGenerationRef.current += 1;
-      try {
-        const ok = await vault.unlockVault(passphrase);
-        if (ok) {
-          const loadedContexts = await vault.loadAllContexts();
-          const loadedReceipts = await vault.loadAllReceipts();
-          setContexts(loadedContexts);
-          setReceipts(loadedReceipts);
-          setPhase("unlocked");
-          return true;
-        }
-      } catch {
-        // Vault unlock failed
-      }
-
-      return false;
-    },
-    [vault],
-  );
-
-  /**
-   * Locks the workspace and clears key material in worker memory.
-   */
-  const lock = useCallback(async (): Promise<void> => {
-    requestGenerationRef.current += 1;
-    // Destroy all active handles in worker
-    for (const handle of activeHandlesRef.current.values()) {
-      await worker.destroyHandle(handle).catch(() => {});
-    }
-    activeHandlesRef.current.clear();
-    await vault.lockVault().catch(() => { });
-    setPhase("locked");
-  }, [vault, worker]);
-
-  /**
-   * Creates a new encrypted vault in IndexedDB with the given passphrase.
-   */
-  const createVault = useCallback(
-    async (passphrase: string): Promise<boolean> => {
-      requestGenerationRef.current += 1;
-      if (passphrase.trim().length < 4) return false;
-
-      await vault.initializeVault(passphrase);
-      setContexts([]);
-      setReceipts([]);
-      setPhase("unlocked");
-      return true;
-    },
-    [vault],
-  );
-
-  /**
    * Adds an imported viewing key candidate.
    * Runs preflight through the WASM worker, performs capability overlap checks,
    * assigns an opaque handle, and persists to the encrypted vault.
@@ -200,15 +173,22 @@ export function WorkspaceProvider({
       customLabel?: string,
       rawKeyBytes?: Uint8Array,
     ): Promise<string> => {
+      if (storageStatus !== "ready") {
+        throw new Error(storageError ?? "Local workspace storage is still opening.");
+      }
       if (!rawKeyBytes) {
         throw new Error("A real incoming viewing-key file is required for import.");
       }
 
       // 1. Run through worker decode to validate format and policy
+      const generation = requestGenerationRef.current;
       const decodeResult = await worker.decodeUivk(rawKeyBytes, candidate.network);
+      if (generation !== requestGenerationRef.current) {
+        await worker.destroyHandle(decodeResult.handle).catch(() => {});
+        throw new Error("Key import was cancelled because the workspace changed.");
+      }
 
-      const newId = `ctx-imp-${Date.now()}`;
-      activeHandlesRef.current.set(newId, decodeResult.handle);
+      const newId = `ctx-imp-${crypto.randomUUID()}`;
 
       // 2. Detect capability overlap with existing contexts
       const overlappingContextIds: string[] = [];
@@ -254,13 +234,23 @@ export function WorkspaceProvider({
         note: candidate.description,
       };
 
-      // 3. Always persist to vault
-      await vault.saveEncryptedContext(newContext).catch(() => { });
+      // Publish the context only after its encrypted write succeeds.
+      try {
+        await vault.saveEncryptedContext(newContext);
+        if (generation !== requestGenerationRef.current) {
+          await vault.deleteEncryptedContext(newId);
+          throw new Error("Key import was cancelled because the workspace changed.");
+        }
+      } catch (error) {
+        await worker.destroyHandle(decodeResult.handle).catch(() => {});
+        throw error;
+      }
+      activeHandlesRef.current.set(newId, decodeResult.handle);
 
       setContexts((prev) => [newContext, ...prev]);
       return newId;
     },
-    [contexts, vault, worker],
+    [contexts, vault, worker, storageStatus, storageError],
   );
 
   /**
@@ -278,6 +268,9 @@ export function WorkspaceProvider({
         throw new Error("The viewing key is not available in this session. Re-import it before scanning.");
       }
 
+      const generation = requestGenerationRef.current;
+      const isCurrent = () => generation === requestGenerationRef.current &&
+        activeHandlesRef.current.get(contextId) === handle;
       setIsScanning(true);
       try {
         const result = await scannerRef.current.scanContext(
@@ -286,8 +279,12 @@ export function WorkspaceProvider({
           receipts,
           {
             onProgress: (update) => setScanProgress(update),
+            isCurrent,
           },
         );
+        if (!isCurrent()) {
+          throw new Error("Scan was cancelled because the workspace changed.");
+        }
 
         setContexts((prev) =>
           prev.map((c) => (c.id === contextId ? result.updatedContext : c)),
@@ -351,7 +348,7 @@ export function WorkspaceProvider({
         void worker.destroyHandle(handle);
         activeHandlesRef.current.delete(id);
       }
-      await vault.deleteEncryptedContext(id).catch(() => { });
+      await vault.deleteEncryptedContext(id);
       setContexts((prev) => prev.filter((c) => c.id !== id));
       setReceipts((prev) => prev.filter((r) => r.contextId !== id));
     },
@@ -363,9 +360,6 @@ export function WorkspaceProvider({
    */
   const requestMemo = useCallback(
     async (receiptId: string): Promise<MemoData> => {
-      if (phase !== "unlocked") {
-        throw new Error("Memo retrieval requires an unlocked workspace.");
-      }
       const receipt = receipts.find((r) => r.id === receiptId);
       if (!receipt) {
         throw new Error("The selected receipt is no longer available in this workspace.");
@@ -413,19 +407,15 @@ export function WorkspaceProvider({
       );
       return memo;
     },
-    [contexts, receipts, phase],
+    [contexts, receipts],
   );
 
   /**
    * Offline memo import: decrypts a memo from raw full-transaction bytes
-   * without any relay request. Requires an unlocked live workspace and the
-   * context's active handle.
+   * without any relay request. Requires the context's active handle.
    */
   const importOfflineMemo = useCallback(
     async (receiptId: string, txBytes: Uint8Array): Promise<MemoData> => {
-      if (phase !== "unlocked") {
-        throw new Error("Offline memo import requires an unlocked workspace.");
-      }
       const receipt = receipts.find((r) => r.id === receiptId);
       if (!receipt) {
         throw new Error("The selected receipt is no longer available in this workspace.");
@@ -466,7 +456,7 @@ export function WorkspaceProvider({
       );
       return memo;
     },
-    [contexts, receipts, phase],
+    [contexts, receipts],
   );
 
   /**
@@ -522,8 +512,7 @@ export function WorkspaceProvider({
       await worker.destroyHandle(handle).catch(() => {});
     }
     activeHandlesRef.current.clear();
-    await vault.lockVault().catch(() => { });
-    setPhase("locked");
+    await vault.clearWorkspace();
     setContexts([]);
     setReceipts([]);
     setDisclosureHistory([]);
@@ -540,14 +529,15 @@ export function WorkspaceProvider({
     activeContexts: contexts.filter((c) => c.status === "active").length,
     archivedContexts: contexts.filter((c) => c.status === "archived").length,
     totalReceipts: receipts.length,
-    cachedChainBytes: contexts.length > 0 ? 5_120_000 : 0,
+    cachedChainBytes: 0,
   };
 
   return (
     <WorkspaceContext.Provider
       value={{
-        phase,
         mode: "live",
+        storageStatus,
+        storageError,
         contexts,
         receipts,
         disclosureHistory,
@@ -555,9 +545,6 @@ export function WorkspaceProvider({
         relayConnected,
         isScanning,
         scanProgress,
-        unlock,
-        lock,
-        createVault,
         addImportedCandidate,
         archiveContext,
         unarchiveContext,

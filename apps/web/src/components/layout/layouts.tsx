@@ -3,6 +3,7 @@ import { LogoMark } from "@/components/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { useWorkspace } from "@/context/workspace-context";
+import { WorkspaceGate } from "@/components/dashboard/workspace-gate";
 
 const publicNavLinks = [
   { label: "Docs", href: "/docs" },
@@ -135,7 +136,7 @@ const dashboardNav = [
 ] as const;
 
 function AppLayout() {
-  const { phase, mode, relayConnected } = useWorkspace();
+  const { mode, relayConnected, storageStatus } = useWorkspace();
   return (
     <div className="flex min-h-screen flex-col bg-muted/30">
       <a href="#main-content" className="skip-link">Skip to content</a>
@@ -146,8 +147,8 @@ function AppLayout() {
               <LogoMark className="size-8 text-foreground" />
               <span className="text-lg font-semibold tracking-tight">Vinca</span>
             </Link>
-            <Badge variant={phase === "unlocked" ? "secondary" : "muted"}>
-              Workspace: {phase} ({mode})
+            <Badge variant={storageStatus === "ready" ? "secondary" : "muted"}>
+              Workspace: {storageStatus === "ready" ? mode : storageStatus === "error" ? "storage error" : "opening"}
             </Badge>
             <Link
               to="/app/settings"
@@ -191,7 +192,7 @@ function AppLayout() {
       </header>
 
         <main id="main-content" tabIndex={-1} className="site-container page-space flex-1">
-        <Outlet />
+        <WorkspaceGate><Outlet /></WorkspaceGate>
       </main>
     </div>
   );

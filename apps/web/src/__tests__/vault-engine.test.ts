@@ -27,24 +27,12 @@
   16. Disclosure files: buildContinuingAccessPreview — excludes unrelated receipts.
   17. Disclosure files: buildStaleCoverageWarning — singular/plural forms.
   18. Disclosure files: buildLatePaymentWarning — stale + gap, gap only, stale only, clean.
-  19. Lock manager: onLock fires after the configured timeout.
-  20. Lock manager: resetTimer postpones the lock fire.
-  21. Lock manager: stop prevents the lock from firing.
-  22. Vault adapter: initializeVault persists meta and enables loadAllContexts.
-  23. Vault adapter: unlockVault returns false for wrong passphrase.
-  24. Vault adapter: saveEncryptedContext round-trips through IDB.
-  25. Vault adapter: deleteEncryptedContext removes context and receipts.
-  26. Vault adapter: exportRecoveryBackup uses a separate export passphrase.
-  27. Vault adapter: importRecoveryBackup restores contexts with staleCoverageWarning.
-  28. Vault adapter: importRecoveryBackup rejects wrong passphrase without modifying workspace.
-  29. Vault adapter: checkQuota returns non-negative values.
-  30. Vault adapter: lockVault clears the key (subsequent operations throw).
-  31. IDB: putEncryptedContext round-trips.
-  32. IDB: deleteEncryptedReceiptsForContext removes by-context index.
-  33. IDB: estimateStorageUsage returns object with numeric fields.
+  19. IDB: putEncryptedContext round-trips.
+  20. IDB: deleteEncryptedReceiptsForContext removes by-context index.
+  21. IDB: estimateStorageUsage returns object with numeric fields.
 */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   deriveKey,
   encrypt,
@@ -72,10 +60,6 @@ import {
   FILE_SCHEMA_VERSION,
   type RecordSnapshotPayload,
 } from "@/lib/vault/disclosure-files";
-
-import {
-  createInactivityLockManager,
-} from "@/lib/vault/lock-manager";
 
 import type { AadComponents } from "@/lib/vault/crypto";
 import type { ContextSummary, Receipt } from "@/types";
@@ -393,54 +377,6 @@ describe("vault/disclosure-files — buildLatePaymentWarning", () => {
   it("24. clean context gives generic deletion message", () => {
     const msg = buildLatePaymentWarning(fixtureContext);
     expect(msg).toMatch(/permanently removes/i);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 25–27. Lock manager
-// ---------------------------------------------------------------------------
-
-describe("vault/lock-manager", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("25. onLock fires after the configured timeout", () => {
-    const onLock = vi.fn();
-    const manager = createInactivityLockManager(onLock, 1_000);
-    manager.start();
-    vi.advanceTimersByTime(999);
-    expect(onLock).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
-    expect(onLock).toHaveBeenCalledOnce();
-    manager.stop();
-  });
-
-  it("26. resetTimer postpones the lock fire", () => {
-    const onLock = vi.fn();
-    const manager = createInactivityLockManager(onLock, 1_000);
-    manager.start();
-    vi.advanceTimersByTime(800);
-    manager.resetTimer();
-    vi.advanceTimersByTime(800);
-    expect(onLock).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(200);
-    expect(onLock).toHaveBeenCalledOnce();
-    manager.stop();
-  });
-
-  it("27. stop prevents the lock from firing", () => {
-    const onLock = vi.fn();
-    const manager = createInactivityLockManager(onLock, 1_000);
-    manager.start();
-    vi.advanceTimersByTime(500);
-    manager.stop();
-    vi.advanceTimersByTime(2_000);
-    expect(onLock).not.toHaveBeenCalled();
   });
 });
 

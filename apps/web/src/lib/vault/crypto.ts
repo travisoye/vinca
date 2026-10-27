@@ -68,8 +68,8 @@ export const SALT_BYTES = 16;
 // ---------------------------------------------------------------------------
 
 /**
- * An opaque non-extractable CryptoKey derived from a passphrase.
- * Hold in memory only; discard on lock.
+ * A non-extractable AES-GCM key. Workspace keys are browser-local; encrypted
+ * export keys are derived from a file passphrase and kept only in memory.
  */
 export type DerivedVaultKey = CryptoKey;
 

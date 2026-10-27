@@ -41,7 +41,6 @@ export function ContextDetailPage() {
   const { contextId } = useParams<{ contextId: string }>();
   const navigate = useNavigate();
   const {
-    phase,
     contexts,
     receipts,
     archiveContext,
@@ -67,12 +66,9 @@ export function ContextDetailPage() {
   const [viewingMemo, setViewingMemo] = useState<{ receipt: Receipt; memo: MemoData } | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const memoTargetGenerationRef = useRef(0);
-  const memoTargetRef = useRef({ contextId, phase });
-  if (
-    memoTargetRef.current.contextId !== contextId ||
-    memoTargetRef.current.phase !== phase
-  ) {
-    memoTargetRef.current = { contextId, phase };
+  const memoTargetRef = useRef({ contextId });
+  if (memoTargetRef.current.contextId !== contextId) {
+    memoTargetRef.current = { contextId };
     memoTargetGenerationRef.current += 1;
   }
 
@@ -82,7 +78,7 @@ export function ContextDetailPage() {
     setOfflineImportOpen(false);
     setActiveReceiptForMemo(null);
     setViewingMemo(null);
-  }, [contextId, phase]);
+  }, [contextId]);
 
   const handleScan = async () => {
     if (!context) return;
@@ -481,7 +477,6 @@ export function ContextDetailPage() {
             if (
               generation !== memoTargetGenerationRef.current ||
               memoTargetRef.current.contextId !== contextId ||
-              memoTargetRef.current.phase !== phase ||
               activeReceiptForMemo?.id !== receiptId ||
               activeReceiptForMemo.contextId !== contextId
             ) {
@@ -512,7 +507,6 @@ export function ContextDetailPage() {
             if (
               generation !== memoTargetGenerationRef.current ||
               memoTargetRef.current.contextId !== contextId ||
-              memoTargetRef.current.phase !== phase ||
               !receipt ||
               receipt?.id !== receiptId ||
               receipt.contextId !== contextId

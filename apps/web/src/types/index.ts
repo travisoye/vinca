@@ -188,12 +188,6 @@ export interface DisclosurePreviewRequest {
 }
 
 /**
- * Workspace lifecycle as seen by the interface. Phase 1 models it in memory
- * with a fixture passphrase; the real encrypted vault arrives in phase 6.
- */
-export type WorkspacePhase = "no-vault" | "locked" | "unlocked";
-
-/**
  * Generic loadable state for interface regions, with an explicit cancelled
  * state required by prd.md phase 1 (cancellation states must be finished in
  * the UI before backend work).

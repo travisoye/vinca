@@ -349,13 +349,12 @@ describe("Phase 3 Dashboard & Sample Workflows", () => {
   });
 
   describe("Settings & recovery (/app/settings)", () => {
-    it("renders vault lock controls, recovery export/import, and storage diagnostics", () => {
+    it("renders recovery export/import, and storage diagnostics", () => {
       renderAt("/app/settings");
       expect(screen.getByRole("heading", { name: "Vault settings & recovery" })).toBeInTheDocument();
       expect(screen.getByText("Local Storage Diagnostics")).toBeInTheDocument();
       expect(screen.getByText("Encrypted Workspace Recovery Snapshot")).toBeInTheDocument();
       expect(screen.getByText(/No spending authority/i)).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /lock workspace immediately/i })).toBeInTheDocument();
     });
   });
 

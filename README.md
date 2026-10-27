@@ -60,9 +60,8 @@ When sharing viewing capabilities or audit evidence, wallet developers face crit
 │              │                                                          │
 │  ┌───────────▼────────────┐                                             │
 │  │ Encrypted Vault (IDB)  │                                             │
-│  │  • PBKDF2 Key Derivation                                             │
-│  │  • AES-256-GCM AEAD    │                                             │
-│  │  • Inactivity Auto-Lock│                                             │
+│  │  • AES-256-GCM AEAD      │                                             │
+│  │  • Auto-opens in browser │                                             │
 │  └────────────────────────┘                                             │
 └───────────────────────┬─────────────────────────────────────────────────┘
                         │ Public JSON/HTTPS (No Keys, No Addresses)
@@ -153,7 +152,7 @@ When Rust WASM sources change, regenerate it from `apps/web` using
 Visit `http://localhost:5173` in your browser.
 
 - **Demo Mode:** Click **"Open Dashboard"** or visit `/demo` to interact with pre-loaded, deterministic synthetic contexts (`ctx-alpha`, `ctx-regtest`). Try comparing capability overlap, testing export previews, and simulating reorg rollbacks without running a node.
-- **Live Mode:** Create an encrypted workspace with a custom passphrase to import real testnet UIVKs and connect to a running chain relay.
+- **Live Mode:** Import real testnet UIVKs to open your browser workspace and connect to a running chain relay. The workspace opens automatically — no passphrase unlock or auto-lock. Anyone with access to this browser profile can read stored records.
 
 ### Running the Public Chain Relay
 

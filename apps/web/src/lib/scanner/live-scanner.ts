@@ -47,6 +47,7 @@ export interface ScanOptions {
   readonly targetHeight?: number;
   readonly chunkSize?: number;
   readonly onProgress?: (update: ScanProgressUpdate) => void;
+  readonly isCurrent?: () => boolean;
 }
 
 export interface ScanResult {
@@ -75,7 +76,14 @@ export class LiveScanner {
     existingReceipts: readonly Receipt[],
     options?: ScanOptions,
   ): Promise<ScanResult> {
+    const assertCurrent = () => {
+      if (options?.isCurrent && !options.isCurrent()) {
+        throw new Error("Scan was cancelled because the workspace changed.");
+      }
+    };
+    assertCurrent();
     const tipHeight = options?.targetHeight ?? (await this.relay.getTipHeight(context.network));
+    assertCurrent();
     let startHeight =
       context.coverage.scannerVersion === SCANNER_VERSION
         ? (context.coverage.lastScannedHeight ?? context.birthdayHeight - 1) + 1
@@ -129,6 +137,7 @@ export class LiveScanner {
 
       // 1. Fetch public compact blocks from relay
       const compactBlocks = await this.relay.fetchCompactBlocks(context.network, chunkRange);
+      assertCurrent();
 
       // 2. Local trial-decryption inside WASM worker
       const scanResult: WorkerScanResult = await this.worker.scanRange(
@@ -136,6 +145,7 @@ export class LiveScanner {
         chunkRange,
         compactBlocks,
       );
+      assertCurrent();
 
       // 3. Handle chain reorganisation if detected
       if (scanResult.reorgDetected && scanResult.commonAncestorHeight !== undefined) {
@@ -180,7 +190,8 @@ export class LiveScanner {
 
           // Persist to encrypted vault if connected
           if (this.vault) {
-            await this.vault.saveEncryptedReceipt(receipt).catch(() => {});
+            await this.vault.saveEncryptedReceipt(receipt);
+            assertCurrent();
           }
         }
       }
@@ -225,7 +236,9 @@ export class LiveScanner {
 
     // Persist updated context to vault
     if (this.vault) {
-      await this.vault.saveEncryptedContext(updatedContext).catch(() => {});
+      assertCurrent();
+      await this.vault.saveEncryptedContext(updatedContext);
+      assertCurrent();
     }
 
     return {

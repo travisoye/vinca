@@ -1,19 +1,15 @@
 /*
   vault/vault-adapter.ts — Real VincaVaultPort implementation.
 
-  This module replaces the fixture-only workspace adapter with genuine local
-  security backed by:
-    • PBKDF2-HMAC-SHA-256 key derivation (vault/crypto.ts)
-    • AES-256-GCM per-record encryption (vault/crypto.ts)
-    • IndexedDB persistence (vault/idb.ts)
-    • 10-minute inactivity locking (vault/lock-manager.ts)
-    • Authenticated file-kind bundles (vault/disclosure-files.ts)
+  Automatically opens browser-local AES-256-GCM storage. The non-extractable
+  encryption key is retained by IndexedDB, not protected by a workspace
+  passphrase. Anyone using this browser profile can open the workspace.
+  Separate recovery-file passphrases still use PBKDF2-HMAC-SHA-256.
 
   Key isolation
   ─────────────
-  The derived CryptoKey is held in module-level memory as a non-extractable
-  WebCrypto object. It is never serialised, logged, or placed in React state.
-  On lock, the reference is set to null.
+  The CryptoKey is not exported, logged, or placed in React state. Viewing-key
+  material remains in the WASM worker. There is no workspace lock lifecycle.
 
   Multi-tab safety
   ────────────────
@@ -55,28 +51,24 @@ import {
 } from "./crypto";
 
 import {
-  closeVaultDb,
+  clearWorkspaceRecords,
   deleteEncryptedContext,
   deleteEncryptedReceiptsForContext,
   estimateStorageUsage,
   getAllEncryptedContexts,
   getAllEncryptedReceipts,
   getEncryptedContext,
+  getOrCreateWorkspaceKey,
   openVaultDb,
   putEncryptedContext,
   putEncryptedReceipt,
-  readVaultMeta,
-  writeVaultMeta,
   type EncryptedContextRecord,
   type EncryptedReceiptRecord,
-  type VaultMetaRecord,
 } from "./idb";
 
 import {
   buildStaleCoverageWarning,
 } from "./disclosure-files";
-
-import { createInactivityLockManager, type InactivityLockManager } from "./lock-manager";
 
 // ---------------------------------------------------------------------------
 // Schema identifiers
@@ -85,26 +77,6 @@ import { createInactivityLockManager, type InactivityLockManager } from "./lock-
 const SCHEMA_VERSION = "1.0" as const;
 const CONTEXT_KIND = "context" as const;
 const RECEIPT_KIND = "receipt" as const;
-
-// ---------------------------------------------------------------------------
-// Module-level key holder (never in React state or serialised)
-// ---------------------------------------------------------------------------
-
-let _vaultKey: DerivedVaultKey | null = null;
-let _lockManager: InactivityLockManager | null = null;
-
-function requireKey(): DerivedVaultKey {
-  if (!_vaultKey) {
-    throw new Error("Vault is locked. Unlock before accessing private data.");
-  }
-  return _vaultKey;
-}
-
-function clearKey(): void {
-  // Setting to null allows the CryptoKey object to be garbage-collected.
-  // WebCrypto non-extractable keys contain no JS-accessible secret bytes.
-  _vaultKey = null;
-}
 
 // ---------------------------------------------------------------------------
 // AAD helpers
@@ -123,89 +95,29 @@ function receiptAad(id: string, revision: number): AadComponents {
 // ---------------------------------------------------------------------------
 
 class VaultAdapter implements VincaVaultPort {
-  // ---- Initialisation -------------------------------------------------------
+  private keyPromise: Promise<DerivedVaultKey> | null = null;
 
-  async initializeVault(passphrase: string): Promise<void> {
-    const salt = generateSalt();
-    const key = await deriveKey(passphrase, salt, MIN_KDF_ITERATIONS);
-
-    const meta: VaultMetaRecord = {
-      id: "singleton",
-      saltHex: Array.from(salt)
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join(""),
-      kdfIterations: MIN_KDF_ITERATIONS,
-      schemaVersion: SCHEMA_VERSION,
-      createdAtUtc: new Date().toISOString(),
-    };
-
-    await writeVaultMeta(meta);
-
-    _vaultKey = key;
-    this._startInactivityLock();
+  private getKey(): Promise<DerivedVaultKey> {
+    this.keyPromise ??= getOrCreateWorkspaceKey().catch((error) => {
+      this.keyPromise = null;
+      throw error;
+    });
+    return this.keyPromise;
   }
 
-  // ---- Unlock ---------------------------------------------------------------
-
-  async unlockVault(passphrase: string): Promise<boolean> {
-    const meta = await readVaultMeta();
-    if (!meta) {
-      // No vault exists yet; caller should call initializeVault.
-      return false;
-    }
-
-    // Validate the stored KDF parameters before stretching.
-    try {
-      validateKdfParams(meta.kdfIterations);
-    } catch {
-      return false;
-    }
-
-    const saltBytes = this._hexToBytes(meta.saltHex);
-    if (saltBytes.length !== SALT_BYTES) return false;
-
-    let key: DerivedVaultKey;
-    try {
-      key = await deriveKey(passphrase, saltBytes, meta.kdfIterations);
-    } catch {
-      return false;
-    }
-
-    // Verify the key is correct by attempting to decrypt the first context (if any).
-    const allContexts = await getAllEncryptedContexts();
-    if (allContexts.length > 0) {
-      const sample = allContexts[0];
-      try {
-        await decrypt(key, sample, contextAad(sample.id, sample.revision));
-      } catch (err) {
-        if (err instanceof VaultCryptoError && err.code === "WRONG_PASSPHRASE") {
-          return false;
-        }
-        // Other errors (e.g. corrupted record) — still reject unlock.
-        return false;
-      }
-    }
-
-    _vaultKey = key;
-    this._startInactivityLock();
-    return true;
+  async openWorkspace(): Promise<void> {
+    await this.getKey();
   }
 
-  // ---- Lock -----------------------------------------------------------------
-
-  async lockVault(): Promise<void> {
-    if (_lockManager) {
-      _lockManager.stop();
-      _lockManager = null;
-    }
-    clearKey();
-    closeVaultDb();
+  async clearWorkspace(): Promise<void> {
+    await this.openWorkspace();
+    await clearWorkspaceRecords();
   }
 
   // ---- Context storage ------------------------------------------------------
 
   async saveEncryptedContext(context: ContextSummary): Promise<void> {
-    const key = requireKey();
+    const key = await this.getKey();
 
     // Read the existing revision to increment it (prevents replay of old envelopes).
     const existing = await getEncryptedContext(context.id);
@@ -227,14 +139,14 @@ class VaultAdapter implements VincaVaultPort {
   }
 
   async deleteEncryptedContext(id: string): Promise<void> {
-    requireKey(); // Must be unlocked to delete.
+    await this.openWorkspace();
     await deleteEncryptedContext(id);
     await deleteEncryptedReceiptsForContext(id);
   }
 
-  /** Decrypts and returns all stored contexts. Throws if locked. */
+  /** Automatically opens storage and decrypts the saved contexts. */
   async loadAllContexts(): Promise<readonly ContextSummary[]> {
-    const key = requireKey();
+    const key = await this.getKey();
     const records = await getAllEncryptedContexts();
     const contexts: ContextSummary[] = [];
 
@@ -250,7 +162,7 @@ class VaultAdapter implements VincaVaultPort {
   // ---- Receipt storage (used by integration layer) -------------------------
 
   async saveEncryptedReceipt(receipt: Receipt): Promise<void> {
-    const key = requireKey();
+    const key = await this.getKey();
     const revision = 0; // Receipts are immutable once written.
     const aad = receiptAad(receipt.id, revision);
     const envelope = await encrypt(key, serialise(receipt), aad);
@@ -267,9 +179,9 @@ class VaultAdapter implements VincaVaultPort {
     await putEncryptedReceipt(record);
   }
 
-  /** Decrypts and returns all stored receipts. Throws if locked. */
+  /** Automatically opens storage and decrypts the saved receipts. */
   async loadAllReceipts(): Promise<readonly Receipt[]> {
-    const key = requireKey();
+    const key = await this.getKey();
     const records = await getAllEncryptedReceipts();
     const receipts: Receipt[] = [];
 
@@ -285,7 +197,7 @@ class VaultAdapter implements VincaVaultPort {
   // ---- Recovery backup export ----------------------------------------------
 
   async exportRecoveryBackup(passphrase: string): Promise<RecoveryBackupBundle> {
-    requireKey(); // Vault must be unlocked to read contexts + receipts.
+    await this.openWorkspace();
 
     const contexts = await this.loadAllContexts();
     const receipts = await this.loadAllReceipts();
@@ -327,7 +239,7 @@ class VaultAdapter implements VincaVaultPort {
     bundle: RecoveryBackupBundle,
     passphrase: string,
   ): Promise<RecoveryRestoreResult> {
-    requireKey(); // Active vault must be unlocked before importing.
+    await this.openWorkspace();
 
     // Validate external KDF params before any compute.
     validateKdfParams(bundle.kdfIterations);
@@ -446,15 +358,6 @@ class VaultAdapter implements VincaVaultPort {
     return out;
   }
 
-  private _startInactivityLock() {
-    if (_lockManager) {
-      _lockManager.stop();
-    }
-    _lockManager = createInactivityLockManager(() => {
-      void this.lockVault();
-    });
-    _lockManager.start();
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,18 +1,13 @@
 /*
   Publicly labelled, deterministic sample data for the interface preview
   (prd.md frontend-first delivery rule). These values contain no real viewing
-  material: identifiers, addresses and amounts are synthetic and the sample
-  passphrase is documented here on purpose so the wrong-passphrase state can be
-  exercised without collecting a real secret.
+  material: identifiers, addresses and amounts are synthetic.
 */
 
 import type {
   ContextSummary,
   Receipt,
 } from "@/types";
-
-/** Fixture unlock passphrase. Public on purpose; the real vault arrives in phase 6. */
-export const SAMPLE_PASSPHRASE = "vinca-demo-0000";
 
 export const fixtureContexts: readonly ContextSummary[] = [
   {

@@ -4,23 +4,9 @@
 */
 import { describe, expect, it } from "vitest";
 import { createFixturePorts } from "@/adapters/fixtures";
-import { SAMPLE_PASSPHRASE } from "@/fixtures";
 import { formatZecFromZatoshis } from "@/lib/format";
 
 const ports = createFixturePorts();
-
-describe("fixture workspace adapter", () => {
-  it("starts with no vault and rejects an incorrect passphrase", async () => {
-    expect(await ports.workspace.phase()).toBe("no-vault");
-    expect(await ports.workspace.unlock("wrong")).toBe("wrong-passphrase");
-  });
-
-  it("unlocks only with the publicly documented sample passphrase", async () => {
-    expect(await ports.workspace.unlock(SAMPLE_PASSPHRASE)).toBe("unlocked");
-    await ports.workspace.lock();
-    expect(await ports.workspace.phase()).toBe("locked");
-  });
-});
 
 describe("fixture context adapter", () => {
   it("lists the fixture contexts and resolves detail by id", async () => {

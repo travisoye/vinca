@@ -9,7 +9,7 @@
     protocol result.
 */
 
-import { fixtureContexts, fixtureReceipts, SAMPLE_PASSPHRASE } from "@/fixtures";
+import { fixtureContexts, fixtureReceipts } from "@/fixtures";
 import type {
   ContextSummary,
   DisclosureKind,
@@ -17,29 +17,8 @@ import type {
   DisclosurePreviewRequest,
   DisclosureWarning,
   Receipt,
-  WorkspacePhase,
 } from "@/types";
-import type { VincaPorts, VincaContextPort, VincaDisclosurePort, VincaWorkspacePort } from "./types";
-
-class FixtureWorkspacePort implements VincaWorkspacePort {
-  private phase_: WorkspacePhase = "no-vault";
-
-  async phase(): Promise<WorkspacePhase> {
-    return this.phase_;
-  }
-
-  async unlock(passphrase: string): Promise<"unlocked" | "wrong-passphrase"> {
-    if (passphrase !== SAMPLE_PASSPHRASE) {
-      return "wrong-passphrase";
-    }
-    this.phase_ = "unlocked";
-    return "unlocked";
-  }
-
-  async lock(): Promise<void> {
-    this.phase_ = this.phase_ === "no-vault" ? "no-vault" : "locked";
-  }
-}
+import type { VincaContextPort, VincaDisclosurePort, VincaPorts } from "./types";
 
 class FixtureContextPort implements VincaContextPort {
   async listContexts(): Promise<readonly ContextSummary[]> {
@@ -136,7 +115,6 @@ function buildSamplePreview(input: {
 /** Shared fixture port set for the whole presentation build. */
 export function createFixturePorts(): VincaPorts {
   return {
-    workspace: new FixtureWorkspacePort(),
     contexts: new FixtureContextPort(),
     disclosures: new FixtureDisclosurePort(),
   };

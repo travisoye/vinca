@@ -20,7 +20,6 @@ import type {
   PoolKind,
   Receipt,
   UnsupportedPoolKind,
-  WorkspacePhase,
 } from "@/types";
 
 /** Opaque handle referring to a viewing key held inside the WASM worker memory. */
@@ -37,12 +36,6 @@ export interface EncryptedPayload {
 // Presentation Ports (Active during Phases 1–4)
 // ---------------------------------------------------------------------------
 
-export interface VincaWorkspacePort {
-  phase(): Promise<WorkspacePhase>;
-  unlock(passphrase: string): Promise<"unlocked" | "wrong-passphrase">;
-  lock(): Promise<void>;
-}
-
 export interface VincaContextPort {
   listContexts(): Promise<readonly ContextSummary[]>;
   getContext(id: string): Promise<ContextSummary | null>;
@@ -54,7 +47,6 @@ export interface VincaDisclosurePort {
 }
 
 export interface VincaPorts {
-  readonly workspace: VincaWorkspacePort;
   readonly contexts: VincaContextPort;
   readonly disclosures: VincaDisclosurePort;
 }
@@ -119,9 +111,8 @@ export interface RecoveryRestoreResult {
 }
 
 export interface VincaVaultPort {
-  initializeVault(passphrase: string): Promise<void>;
-  unlockVault(passphrase: string): Promise<boolean>;
-  lockVault(): Promise<void>;
+  openWorkspace(): Promise<void>;
+  clearWorkspace(): Promise<void>;
   saveEncryptedContext(context: ContextSummary, keyPayload?: EncryptedPayload): Promise<void>;
   saveEncryptedReceipt(receipt: Receipt): Promise<void>;
   deleteEncryptedContext(id: string): Promise<void>;
