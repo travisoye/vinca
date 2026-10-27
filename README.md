@@ -29,6 +29,16 @@
 
 When sharing viewing capabilities or audit evidence, wallet developers face critical boundaries: viewing keys cannot be revoked once shared, diversified addresses can link histories unexpectedly, and raw viewing keys grant complete historical and future visibility. Vinca provides the tooling to understand, bound, and verify these disclosures *before* any data leaves your machine.
 
+---
+
+## Problem Statement
+
+Wallet and payment developers have no safe way to inspect or share incoming viewing capability before committing to it. Once an incoming viewing key is exported and shared, it cannot be revoked on chain; anyone holding it can decrypt past and future incoming payments tied to that capability. Diversified addresses derived from one account are not independent capabilities, so sharing them can unintentionally link transaction histories. Raw viewing keys grant full historical and future visibility, yet developers have no tooling to evaluate overlap, confirm what notes a key can open, bound scan coverage, or verify a disclosure *before* any key material leaves their machine. Existing workflows force a choice between blind trust and not sharing at all.
+
+## Solution
+
+Vinca is an accountless, browser-based disclosure workbench that lets developers understand, bound, and verify incoming viewing capability before anything is shared. Users import ZIP 316 Unified Incoming Viewing Keys (UIVK) locally, inspect received notes through browser-local WASM trial decryption of public testnet/regtest compact blocks, explicitly consent before any on-demand memo retrieval, and export either a Context-Access Package (continuing viewing capability, irrevocable) or a Record Snapshot (selected records, zero key material). Viewing keys never leave the browser — they are held in Web Worker memory behind opaque handles, never in DOM state, URLs, localStorage, or network payloads. Mainnet keys, addresses, and endpoints are permanently rejected at every boundary.
+
 ### Key Capabilities
 
 - **Browser-Local Cryptographic Inspection:** Import ZIP 316 Unified Incoming Viewing Keys (UIVK) and inspect Orchard and experimental Ironwood capability components.
