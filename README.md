@@ -6,23 +6,6 @@
 
 ---
 
-> **Testnet scanning status (2026-10-27):** Testnet UIVK import and compact
-> Orchard/Ironwood block trial-decryption are now wired through the Rust WASM
-> worker. Local cryptographic vectors and scanner tests pass, and the WASM
-> package builds. This does **not** confirm any particular wallet receipt:
-> this workspace has not scanned testnet using your key, and old scan-height
-> records are not proof of decrypted blocks. Import the actual incoming key
-> locally and its real birthday height; verify that the relay is connected and
-> the resulting coverage includes the height of the receipt. Never send the key
-> in chat.
->
-> **Memo implementation status:** The generated WASM package now exposes
-> full-transaction Orchard/Ironwood memo decryption. Synthetic encrypted
-> transaction vectors, worker/API tests, frontend tests, typecheck, and
-> production build passed on 2026-10-27. A full browser memo request through
-> the hosted relay has not been verified: the local browser was blocked by
-> relay CORS, and no user key or transaction was used.
-
 ## 1. Overview
 
 **Vinca** is an accountless, browser-based disclosure workbench built for developers, compliance engineers, and recipients operating on Zcash testnet.
