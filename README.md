@@ -25,7 +25,7 @@
 
 ## 1. Overview
 
-**Vinca** is an accountless, browser-based disclosure workbench built for developers, compliance engineers, and recipients operating on Zcash testnet and reproducible regtest environments.
+**Vinca** is an accountless, browser-based disclosure workbench built for developers, compliance engineers, and recipients operating on Zcash testnet.
 
 When sharing viewing capabilities or audit evidence, wallet developers face critical boundaries: viewing keys cannot be revoked once shared, diversified addresses can link histories unexpectedly, and raw viewing keys grant complete historical and future visibility. Vinca provides the tooling to understand, bound, and verify these disclosures *before* any data leaves your machine.
 
@@ -37,7 +37,7 @@ Wallet and payment developers have no safe way to inspect or share incoming view
 
 ## Solution
 
-Vinca is an accountless, browser-based disclosure workbench that lets developers understand, bound, and verify incoming viewing capability before anything is shared. Users import ZIP 316 Unified Incoming Viewing Keys (UIVK) locally, inspect received notes through browser-local WASM trial decryption of public testnet/regtest compact blocks, explicitly consent before any on-demand memo retrieval, and export either a Context-Access Package (continuing viewing capability, irrevocable) or a Record Snapshot (selected records, zero key material). Viewing keys never leave the browser — they are held in Web Worker memory behind opaque handles, never in DOM state, URLs, localStorage, or network payloads. Mainnet keys, addresses, and endpoints are permanently rejected at every boundary.
+Vinca is an accountless, browser-based disclosure workbench that lets developers understand, bound, and verify incoming viewing capability before anything is shared. Users import ZIP 316 Unified Incoming Viewing Keys (UIVK) locally, inspect received notes through browser-local WASM trial decryption of public testnet compact blocks, explicitly consent before any on-demand memo retrieval, and export either a Context-Access Package (continuing viewing capability, irrevocable) or a Record Snapshot (selected records, zero key material). Viewing keys never leave the browser — they are held in Web Worker memory behind opaque handles, never in DOM state, URLs, localStorage, or network payloads. Mainnet keys, addresses, and endpoints are permanently rejected at every boundary.
 
 ### Key Capabilities
 
@@ -161,7 +161,7 @@ When Rust WASM sources change, regenerate it from `apps/web` using
 
 Visit `http://localhost:5173` in your browser.
 
-- **Demo Mode:** Click **"Open Dashboard"** or visit `/demo` to interact with pre-loaded, deterministic synthetic contexts (`ctx-alpha`, `ctx-regtest`). Try comparing capability overlap, testing export previews, and simulating reorg rollbacks without running a node.
+- **Demo Mode:** Click **"Open Dashboard"** or visit `/demo` to interact with pre-loaded, deterministic synthetic contexts (`ctx-alpha`). Try comparing capability overlap, testing export previews, and simulating reorg rollbacks without running a node.
 - **Live Mode:** Import real testnet UIVKs to open your browser workspace and connect to a running chain relay. The workspace opens automatically — no passphrase unlock or auto-lock. Anyone with access to this browser profile can read stored records.
 
 ### Running the Public Chain Relay
@@ -285,4 +285,4 @@ the Dockerfile now copies the tracked `vendor/` override required by Cargo.
 
 ## 9. Disclaimer
 
-*Vinca is an experimental hackathon project developed for the ZECATHON Core & Tooling track. It is provided for testnet and reproducible regtest use only. Vinca has not been independently audited. Never import mainnet seed phrases, private keys, or full viewing keys into Vinca.*
+*Vinca is an experimental hackathon project developed for the ZECATHON Core & Tooling track. It is provided for testnet use only. Vinca has not been independently audited. Never import mainnet seed phrases, private keys, or full viewing keys into Vinca.*
