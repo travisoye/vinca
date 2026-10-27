@@ -55,9 +55,23 @@ export type EvidenceLevel =
  * containing the memo has already been locally obtained (offline import or a
  * previously approved fetch); it is never fetched automatically.
  */
+export type MemoFormat =
+  | "text"
+  | "no-memo"
+  | "arbitrary-bytes"
+  | "future-format"
+  | "legacy-nontext";
+
+export interface MemoData {
+  readonly format: MemoFormat;
+  readonly text: string;
+  /** Complete 512-byte ZIP-302 memo; absent only on already stored legacy records. */
+  readonly rawBytesHex?: string;
+}
+
 export type MemoState =
   | { readonly state: "not-requested" }
-  | { readonly state: "available"; readonly format: "text" | "arbitrary-bytes"; readonly text: string }
+  | ({ readonly state: "available" } & MemoData)
   | { readonly state: "unavailable"; readonly reason: string };
 
 /**

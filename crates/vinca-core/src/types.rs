@@ -161,4 +161,7 @@ pub struct DecryptedMemo {
 pub enum MemoFormat {
     Text,
     ArbitraryBytes,
+    NoMemo,
+    FutureFormat,
+    LegacyNontext,
 }

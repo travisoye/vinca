@@ -27,11 +27,14 @@ import type {
 } from "@/types";
 import type {
   OpaqueKeyHandle,
+  WorkerDecryptedMemoResult,
   VincaRelayPort,
   VincaVaultPort,
   VincaWorkerPort,
   WorkerScanResult,
 } from "@/adapters/types";
+import { assertDecryptedMemo } from "@/lib/memo";
+import type { MemoData } from "@/types";
 
 export interface ScanProgressUpdate {
   readonly currentHeight: number;
@@ -236,21 +239,65 @@ export class LiveScanner {
   /**
    * On-demand memo request:
    * Fetches full transaction bytes after consent, then decrypts in the worker.
+   * Persists the receipt only after the worker returns success.
    */
   async fetchAndDecryptMemo(
     context: ContextSummary,
     handle: OpaqueKeyHandle,
     receipt: Receipt,
-  ): Promise<Receipt> {
+    isCurrent: () => boolean = () => true,
+  ): Promise<MemoData> {
+    this.validateMemoTarget(context, receipt);
+    if (!isCurrent()) {
+      throw new Error("Memo request was cancelled because the workspace changed.");
+    }
+
     // 1. Fetch raw transaction bytes
     const txBytes = await this.relay.fetchTransaction(context.network, receipt.txIdHex);
+    if (!isCurrent()) {
+      throw new Error("Memo request was cancelled because the workspace changed.");
+    }
 
-    // 2. Decrypt memo in worker
-    const memoResult = await this.worker.decryptMemo(
+    return this.decryptAndPersistMemo(handle, receipt, txBytes, isCurrent);
+  }
+
+  /**
+   * Offline import uses the same receipt verification, worker decryption, and
+   * encrypted persistence path as relay retrieval without making a relay call.
+   */
+  async importOfflineMemo(
+    context: ContextSummary,
+    handle: OpaqueKeyHandle,
+    receipt: Receipt,
+    txBytes: Uint8Array,
+    isCurrent: () => boolean = () => true,
+  ): Promise<MemoData> {
+    this.validateMemoTarget(context, receipt);
+    if (!(txBytes instanceof Uint8Array) || txBytes.length === 0 || txBytes.length > 2 * 1024 * 1024) {
+      throw new Error("Offline transaction bytes must be between 1 byte and 2 MiB.");
+    }
+    return this.decryptAndPersistMemo(handle, receipt, txBytes, isCurrent);
+  }
+
+  private async decryptAndPersistMemo(
+    handle: OpaqueKeyHandle,
+    receipt: Receipt,
+    txBytes: Uint8Array,
+    isCurrent: () => boolean,
+  ): Promise<MemoData> {
+    if (!isCurrent()) {
+      throw new Error("Memo request was cancelled because the workspace changed.");
+    }
+
+    const memoResult: WorkerDecryptedMemoResult = await this.worker.decryptMemo(
       handle,
       txBytes,
       receipt,
     );
+    assertDecryptedMemo(memoResult);
+    if (!isCurrent()) {
+      throw new Error("Memo request was cancelled because the workspace changed.");
+    }
 
     const updatedReceipt: Receipt = {
       ...receipt,
@@ -258,15 +305,29 @@ export class LiveScanner {
         state: "available",
         format: memoResult.format,
         text: memoResult.text,
+        rawBytesHex: memoResult.rawBytesHex ?? undefined,
       },
     };
 
-    // 3. Persist to vault
     if (this.vault) {
       await this.vault.saveEncryptedReceipt(updatedReceipt);
     }
 
-    return updatedReceipt;
+    if (!isCurrent()) {
+      throw new Error("Memo request was cancelled because the workspace changed.");
+    }
+
+    return {
+      format: memoResult.format,
+      text: memoResult.text,
+      rawBytesHex: memoResult.rawBytesHex,
+    };
+  }
+
+  private validateMemoTarget(context: ContextSummary, receipt: Receipt): void {
+    if (context.id !== receipt.contextId || context.network !== receipt.network) {
+      throw new Error("The selected receipt does not belong to this context and network.");
+    }
   }
 
   /**

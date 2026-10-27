@@ -2,6 +2,11 @@
 /* eslint-disable */
 
 /**
+ * Decrypts a selected memo directly from bounded full transaction bytes.
+ */
+export function decrypt_transaction_memo(handle: string, transaction_bytes: Uint8Array, expected_tx_id_hex: string, block_height: number, network: string, pool: string, action_index: number, expected_amount_zatoshis: string): string;
+
+/**
  * Dispatches a raw JSON request from the Web Worker thread into the Rust core.
  *
  * Returns a serialized `WorkerResponse` JSON string:
@@ -18,6 +23,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly decrypt_transaction_memo: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number];
     readonly dispatch_worker_message: (a: number, b: number) => [number, number];
     readonly scan_compact_blocks: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;

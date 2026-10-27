@@ -69,7 +69,11 @@ pub fn build_router(state: AppState) -> Router {
         .merge(api)
         .layer(
             ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
+                .layer(TraceLayer::new_for_http().make_span_with(
+                    |request: &http::Request<_>| {
+                        tracing::info_span!("http_request", method = %request.method())
+                    },
+                ))
                 .layer(TimeoutLayer::with_status_code(
                     StatusCode::REQUEST_TIMEOUT,
                     Duration::from_secs(timeout_secs + 5),

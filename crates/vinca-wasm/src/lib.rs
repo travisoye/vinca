@@ -15,12 +15,15 @@ use vinca_core::{Network, PoolKind};
 /// `{"status": "ok", "data": ...}` or `{"status": "error", "code": ..., "message": ...}`.
 #[wasm_bindgen]
 pub fn dispatch_worker_message(request_json: &str) -> String {
+    if request_json.len() > 16 * 1024 * 1024 {
+        return serialize_error("INPUT_TOO_LARGE", "Worker request exceeds the permitted size.");
+    }
     let req: WorkerRequest = match serde_json::from_str(request_json) {
         Ok(r) => r,
-        Err(e) => {
+        Err(_) => {
             let res = WorkerResponse::Error {
                 code: "DESERIALIZATION_ERROR".into(),
-                message: format!("Malformed request JSON: {}", e),
+                message: "Malformed worker request JSON.".into(),
             };
             return serde_json::to_string(&res).unwrap_or_else(|_| {
                 r#"{"status":"error","code":"CRITICAL","message":"Serialization failed"}"#.into()

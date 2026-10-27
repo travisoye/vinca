@@ -26,6 +26,22 @@ export interface RelayClientConfig {
 
 const MAX_COMPACT_BLOCKS_PER_REQUEST = 1_000;
 const MAX_COMPACT_BLOCK_RESPONSE_BYTES = 10 * 1024 * 1024;
+const MAX_TRANSACTION_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_RELAY_ERROR_BYTES = 64 * 1024;
+
+export class RelayError extends Error {
+  readonly code: string;
+  readonly status?: number;
+  readonly retryable: boolean;
+
+  constructor(message: string, code: string, status?: number, retryable = false) {
+    super(message);
+    this.name = "RelayError";
+    this.code = code;
+    this.status = status;
+    this.retryable = retryable;
+  }
+}
 
 export class RelayClient implements VincaRelayPort {
   private readonly baseUrl: string;
@@ -136,14 +152,130 @@ export class RelayClient implements VincaRelayPort {
 
     // Validate txId format (64 hex characters)
     if (!/^[0-9a-fA-F]{64}$/.test(txIdHex)) {
-      throw new Error(`Invalid transaction ID format: ${txIdHex}`);
+      throw new RelayError(
+        "Invalid transaction ID format.",
+        "INVALID_TXID",
+        400,
+        false,
+      );
     }
 
-    const res = await this.request(
+    return this.requestTransactionBytes(
       `${this.baseUrl}/tx/${network}/${txIdHex.toLowerCase()}`,
-      "application/octet-stream",
     );
-    return new Uint8Array(await res.arrayBuffer());
+  }
+
+  private async requestTransactionBytes(url: string): Promise<Uint8Array> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: { Accept: "application/octet-stream" },
+      });
+
+      if (!response.ok) {
+        const errorBytes = await this.readBoundedResponse(response, MAX_RELAY_ERROR_BYTES);
+        let body: { error_code?: unknown; message?: unknown; retry_after_secs?: unknown } = {};
+        try {
+          body = JSON.parse(new TextDecoder().decode(errorBytes)) as typeof body;
+        } catch {
+          body = {};
+        }
+        const code =
+          typeof body.error_code === "string" && /^[A-Z0-9_]{1,64}$/.test(body.error_code)
+            ? body.error_code
+            : "UPSTREAM_ERROR";
+        const message =
+          typeof body.message === "string"
+            ? body.message.slice(0, 512)
+            : `Relay returned HTTP ${response.status}.`;
+        throw new RelayError(
+          message,
+          code,
+          response.status,
+          response.status === 429 || response.status >= 500,
+        );
+      }
+
+      const contentLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > MAX_TRANSACTION_RESPONSE_BYTES) {
+        throw new RelayError(
+          "Relay transaction response exceeds the 2 MiB client limit.",
+          "PAYLOAD_TOO_LARGE",
+          413,
+          false,
+        );
+      }
+      const bytes = await this.readBoundedResponse(response, MAX_TRANSACTION_RESPONSE_BYTES);
+      if (bytes.length === 0) {
+        throw new RelayError(
+          "Relay returned an empty transaction response.",
+          "EMPTY_TRANSACTION",
+          502,
+          true,
+        );
+      }
+      return bytes;
+    } catch (error) {
+      if (error instanceof RelayError) throw error;
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new RelayError(
+          "Relay request timed out while receiving transaction data.",
+          "UPSTREAM_TIMEOUT",
+          504,
+          true,
+        );
+      }
+      throw new RelayError(
+        "Relay request failed; no chain data was returned.",
+        "RELAY_UNAVAILABLE",
+        undefined,
+        true,
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async readBoundedResponse(response: Response, maxBytes: number): Promise<Uint8Array> {
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new RelayError(
+        "Relay response streaming is unavailable; the response was not buffered.",
+        "RESPONSE_STREAM_UNAVAILABLE",
+        response.status,
+        true,
+      );
+    }
+
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new RelayError(
+          maxBytes === MAX_TRANSACTION_RESPONSE_BYTES
+            ? "Relay transaction response exceeds the 2 MiB client limit."
+            : "Relay error response exceeds the bounded error limit.",
+          maxBytes === MAX_TRANSACTION_RESPONSE_BYTES ? "PAYLOAD_TOO_LARGE" : "ERROR_BODY_TOO_LARGE",
+          maxBytes === MAX_TRANSACTION_RESPONSE_BYTES ? 413 : response.status,
+          false,
+        );
+      }
+      chunks.push(value);
+    }
+
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes;
   }
 
   private async request(
@@ -163,10 +295,23 @@ export class RelayClient implements VincaRelayPort {
       }
       return response;
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("Relay returned HTTP")) {
+      if (error instanceof RelayError) {
         throw error;
       }
-      throw new Error("Relay request failed or timed out; no chain data was returned.");
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new RelayError(
+          "Relay request timed out; no chain data was returned.",
+          "UPSTREAM_TIMEOUT",
+          504,
+          true,
+        );
+      }
+      throw new RelayError(
+        "Relay request failed or timed out; no chain data was returned.",
+        "RELAY_UNAVAILABLE",
+        undefined,
+        true,
+      );
     } finally {
       clearTimeout(timer);
     }

@@ -5,6 +5,7 @@
 
 import init, {
   dispatch_worker_message,
+  decrypt_transaction_memo,
   scan_compact_blocks,
 } from "../wasm/vinca_wasm";
 import type {
@@ -45,23 +46,8 @@ interface ScannedReceipt {
   readonly pool: "orchard" | "ironwood";
 }
 
-type WasmMemoDecryptor = (
-  handle: string,
-  transactionBytes: Uint8Array,
-  expectedTxIdHex: string,
-  blockHeight: number,
-  network: string,
-  pool: string,
-  actionIndex: number,
-  expectedAmountZatoshis: string,
-) => string;
-
 const activeHandles = new Map<string, Network>();
 let wasmReady: Promise<unknown> | undefined;
-
-function isWasmMemoDecryptor(value: unknown): value is WasmMemoDecryptor {
-  return typeof value === "function";
-}
 
 function initializeWasm(): Promise<unknown> {
   wasmReady ??= init();
@@ -188,6 +174,8 @@ self.addEventListener("message", async (event: MessageEvent<WorkerInMessage>) =>
         }
         if (
           !(txBytes instanceof Uint8Array) ||
+          txBytes.length === 0 ||
+          txBytes.length > 2 * 1024 * 1024 ||
           !Number.isSafeInteger(receipt.actionIndex) ||
           receipt.actionIndex < 0 ||
           receipt.actionIndex > 0xffff_ffff ||
@@ -195,7 +183,8 @@ self.addEventListener("message", async (event: MessageEvent<WorkerInMessage>) =>
           receipt.blockHeight < 0 ||
           receipt.blockHeight > 0xffff_ffff ||
           !/^[0-9a-f]{64}$/i.test(receipt.txIdHex) ||
-          !/^\d+$/.test(receipt.amountZatoshis)
+          !/^(0|[1-9]\d*)$/.test(receipt.amountZatoshis) ||
+          BigInt(receipt.amountZatoshis) > 2_100_000_000_000_000n
         ) {
           throw {
             code: "INVALID_MEMO_REQUEST",
@@ -208,20 +197,17 @@ self.addEventListener("message", async (event: MessageEvent<WorkerInMessage>) =>
             message: "The selected receipt does not belong to this viewing-key network.",
           };
         }
-        const wasmModule = await import("../wasm/vinca_wasm");
-        const decryptMemo = Reflect.get(wasmModule, "decrypt_transaction_memo");
-        if (!isWasmMemoDecryptor(decryptMemo)) {
-          throw {
-            code: "INSPECTION_UNAVAILABLE",
-            message: "This WASM package does not include full-transaction memo decryption.",
-          };
-        }
         const data = unwrapRustResponse<{
-          format: "text" | "arbitrary-bytes";
+          format:
+            | "text"
+            | "no-memo"
+            | "arbitrary-bytes"
+            | "future-format"
+            | "legacy-nontext";
           text: string;
-          rawBytesHex?: string;
+          rawBytesHex: string;
         }>(
-          decryptMemo(
+          decrypt_transaction_memo(
             handle,
             txBytes,
             receipt.txIdHex,

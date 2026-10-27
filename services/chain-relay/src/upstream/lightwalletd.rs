@@ -41,6 +41,9 @@ use crate::config::LimitsConfig;
 use crate::error::RelayError;
 use crate::validation::validate_response_size;
 
+const MAX_TRANSACTION_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_TRANSACTION_PROTO_MESSAGE_BYTES: usize = MAX_TRANSACTION_RESPONSE_BYTES + 32;
+
 // ---------------------------------------------------------------------------
 // lightwalletd protobuf types (manually defined subset)
 //
@@ -137,8 +140,8 @@ pub mod proto {
     pub struct TxFilter {
         #[prost(message, optional, tag = "1")]
         pub block: Option<BlockId>,
-        #[prost(bytes, tag = "2")]
-        pub index: Vec<u8>,
+        #[prost(uint64, tag = "2")]
+        pub index: u64,
         #[prost(bytes, tag = "3")]
         pub hash: Vec<u8>,
     }
@@ -265,20 +268,12 @@ impl LightwalletdClient {
     /// Privacy: The txid must have been validated to be a 64-char hex string
     /// before this is called. The txid is NOT logged by this function; the
     /// caller (`routes/transaction.rs`) handles privacy-redacted logging.
+    ///
+    /// The incoming txid hex is in canonical display order (reversed from
+    /// protocol byte order). lightwalletd expects protocol-order bytes at the
+    /// gRPC boundary, so the 32-byte hash is reversed exactly once here.
     pub async fn get_transaction(&self, txid_hex: &str) -> Result<Vec<u8>, RelayError> {
-        use proto::TxFilter;
-        use prost::Message;
-
-        // Decode the hex txid into 32 bytes.
-        let hash_bytes = hex::decode(txid_hex).map_err(|_| {
-            RelayError::InvalidTxId("Failed to hex-decode transaction ID.".into())
-        })?;
-
-        let request = tonic::Request::new(TxFilter {
-            block: None,
-            index: vec![],
-            hash: hash_bytes,
-        });
+        let request = tonic::Request::new(tx_filter_from_display_txid(txid_hex)?);
 
         let response = timeout(
             Duration::from_secs(self.limits.upstream_timeout_secs),
@@ -291,6 +286,14 @@ impl LightwalletdClient {
         .map_err(RelayError::from)?;
 
         let raw_tx = response.into_inner();
+        if raw_tx.data.is_empty() {
+            return Err(RelayError::UnsupportedFormat(
+                "Upstream returned an empty transaction.".into(),
+            ));
+        }
+        if raw_tx.data.len() > MAX_TRANSACTION_RESPONSE_BYTES {
+            return Err(RelayError::ResponseTooLarge);
+        }
         validate_response_size(raw_tx.data.len(), &self.limits)?;
         Ok(raw_tx.data)
     }
@@ -318,7 +321,8 @@ impl LightwalletdClient {
         &self,
         request: tonic::Request<proto::BlockRange>,
     ) -> Result<tonic::Response<tonic::codec::Streaming<proto::CompactBlock>>, tonic::Status> {
-        let mut grpc = tonic::client::Grpc::new(self.channel.clone());
+        let mut grpc = tonic::client::Grpc::new(self.channel.clone())
+            .max_decoding_message_size(self.limits.max_response_bytes);
         let codec = tonic::codec::ProstCodec::default();
         let path = http::uri::PathAndQuery::from_static(
             "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetBlockRange",
@@ -334,7 +338,8 @@ impl LightwalletdClient {
         &self,
         request: tonic::Request<proto::TxFilter>,
     ) -> Result<tonic::Response<proto::RawTransaction>, tonic::Status> {
-        let mut grpc = tonic::client::Grpc::new(self.channel.clone());
+        let mut grpc = tonic::client::Grpc::new(self.channel.clone())
+            .max_decoding_message_size(MAX_TRANSACTION_PROTO_MESSAGE_BYTES);
         let codec = tonic::codec::ProstCodec::default();
         let path = http::uri::PathAndQuery::from_static(
             "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetTransaction",
@@ -346,9 +351,27 @@ impl LightwalletdClient {
     }
 }
 
+fn tx_filter_from_display_txid(txid_hex: &str) -> Result<proto::TxFilter, RelayError> {
+    let hash_bytes = hex::decode(txid_hex)
+        .map_err(|_| RelayError::InvalidTxId("Failed to hex-decode transaction ID.".into()))?;
+    if hash_bytes.len() != 32 {
+        return Err(RelayError::InvalidTxId(
+            "Transaction ID must decode to exactly 32 bytes.".into(),
+        ));
+    }
+
+    let mut protocol_hash = hash_bytes;
+    protocol_hash.reverse();
+    Ok(proto::TxFilter {
+        block: None,
+        index: 0,
+        hash: protocol_hash,
+    })
+}
+
 #[cfg(test)]
 mod proto_tests {
-    use super::proto::CompactTx;
+    use super::{proto::{CompactTx, TxFilter}, tx_filter_from_display_txid};
     use prost::Message;
 
     fn bytes_field(tag: u8, payload: &[u8]) -> Vec<u8> {
@@ -385,5 +408,25 @@ mod proto_tests {
         let roundtrip = CompactTx::decode(decoded.encode_to_vec().as_slice())
             .expect("compact transaction fields should round-trip");
         assert_eq!(roundtrip, decoded);
+    }
+
+    #[test]
+    fn reverses_display_txid_and_encodes_the_uint64_index_schema() {
+        let display_txid = "0123456789abcdef".repeat(4);
+        let filter = tx_filter_from_display_txid(&display_txid).expect("valid display txid");
+
+        assert_eq!(filter.index, 0);
+        assert_eq!(hex::encode(&filter.hash), "efcdab8967452301".repeat(4));
+
+        let encoded = prost::Message::encode_to_vec(&filter);
+        let decoded = TxFilter::decode(encoded.as_slice()).expect("valid TxFilter protobuf");
+        assert_eq!(decoded.index, 0);
+        assert_eq!(decoded.hash, hex::decode("efcdab8967452301".repeat(4)).unwrap());
+    }
+
+    #[test]
+    fn rejects_invalid_txids_before_building_the_upstream_request() {
+        assert!(tx_filter_from_display_txid("not-hex").is_err());
+        assert!(tx_filter_from_display_txid("00").is_err());
     }
 }

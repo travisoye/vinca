@@ -1,11 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -19,9 +17,10 @@ import {
   DeleteContextDialog,
   UnsupportedComponentsDialog,
 } from "@/components/dashboard/context-dialogs";
-import { MemoPrivacyDialog, OfflineMemoImportDialog } from "@/components/dashboard/memo-dialog";
+import { MemoPrivacyDialog, OfflineMemoImportDialog, MemoViewer } from "@/components/dashboard/memo-dialog";
 import { useWorkspace } from "@/context/workspace-context";
 import { formatZecFromZatoshis, shortHex, sumZatoshis } from "@/lib/format";
+import type { MemoData } from "@/adapters/types";
 import type { Receipt } from "@/types";
 import {
   AlertTriangle,
@@ -42,6 +41,7 @@ export function ContextDetailPage() {
   const { contextId } = useParams<{ contextId: string }>();
   const navigate = useNavigate();
   const {
+    phase,
     contexts,
     receipts,
     archiveContext,
@@ -51,6 +51,7 @@ export function ContextDetailPage() {
     isScanning,
     scanProgress,
     requestMemo,
+    importOfflineMemo,
   } = useWorkspace();
 
   const context = contexts.find((c) => c.id === contextId);
@@ -63,8 +64,25 @@ export function ContextDetailPage() {
   const [memoDialogOpen, setMemoDialogOpen] = useState(false);
   const [offlineImportOpen, setOfflineImportOpen] = useState(false);
   const [activeReceiptForMemo, setActiveReceiptForMemo] = useState<Receipt | null>(null);
-  const [viewingMemoText, setViewingMemoText] = useState<string | null>(null);
+  const [viewingMemo, setViewingMemo] = useState<{ receipt: Receipt; memo: MemoData } | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const memoTargetGenerationRef = useRef(0);
+  const memoTargetRef = useRef({ contextId, phase });
+  if (
+    memoTargetRef.current.contextId !== contextId ||
+    memoTargetRef.current.phase !== phase
+  ) {
+    memoTargetRef.current = { contextId, phase };
+    memoTargetGenerationRef.current += 1;
+  }
+
+  useEffect(() => {
+    memoTargetGenerationRef.current += 1;
+    setMemoDialogOpen(false);
+    setOfflineImportOpen(false);
+    setActiveReceiptForMemo(null);
+    setViewingMemo(null);
+  }, [contextId, phase]);
 
   const handleScan = async () => {
     if (!context) return;
@@ -376,7 +394,7 @@ export function ContextDetailPage() {
                         {hasMemo ? (
                           <span className="inline-flex items-center gap-1 text-xs text-primary">
                             <MessageSquare className="size-3.5" />
-                            Memo decrypted
+                            Memo decrypted ({receipt.memo.format ?? "text"})
                           </span>
                         ) : receipt.memo.state === "not-requested" ? (
                           <span className="text-xs text-muted-foreground">Not requested</span>
@@ -389,7 +407,10 @@ export function ContextDetailPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => setViewingMemoText(receipt.memo.state === "available" ? receipt.memo.text : "")}
+                            onClick={() => {
+                              const memo: MemoData = receipt.memo as MemoData;
+                              setViewingMemo({ receipt, memo });
+                            }}
                           >
                             <FileText className="size-3.5" />
                             View memo
@@ -415,31 +436,13 @@ export function ContextDetailPage() {
           </Card>
         </div>
 
-        {/* Memo View Modal (when memo text is opened) */}
-        {viewingMemoText !== null && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-            <Card className="w-full max-w-lg">
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="size-5 text-primary" />
-                  <CardTitle className="text-lg">Decrypted Memo Text</CardTitle>
-                </div>
-                <CardDescription>
-                  Decrypted locally in browser worker. Not transmitted over network.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="rounded-lg border border-border bg-muted/30 p-4 font-mono text-sm">
-                  {viewingMemoText}
-                </div>
-              </CardContent>
-              <CardFooter className="flex justify-end">
-                <Button variant="default" onClick={() => setViewingMemoText(null)}>
-                  Close
-                </Button>
-              </CardFooter>
-            </Card>
-          </div>
+        {/* Memo View Modal (when memo is opened) */}
+        {viewingMemo !== null && (
+          <MemoViewer
+            memo={viewingMemo.memo}
+            receipt={viewingMemo.receipt}
+            onClose={() => setViewingMemo(null)}
+          />
         )}
 
         {/* Dialogs */}
@@ -467,9 +470,31 @@ export function ContextDetailPage() {
         <MemoPrivacyDialog
           receipt={activeReceiptForMemo}
           open={memoDialogOpen}
-          onOpenChange={setMemoDialogOpen}
-          onConfirmFetch={requestMemo}
-          onMemoFetched={setViewingMemoText}
+          onOpenChange={(open) => {
+            if (open || memoTargetRef.current.contextId === contextId) {
+              setMemoDialogOpen(open);
+            }
+          }}
+          onConfirmFetch={async (receiptId) => {
+            const generation = memoTargetGenerationRef.current;
+            const memo = await requestMemo(receiptId);
+            if (
+              generation !== memoTargetGenerationRef.current ||
+              memoTargetRef.current.contextId !== contextId ||
+              memoTargetRef.current.phase !== phase ||
+              activeReceiptForMemo?.id !== receiptId ||
+              activeReceiptForMemo.contextId !== contextId
+            ) {
+              throw new Error("Memo request was cancelled because the selected context changed.");
+            }
+            return memo;
+          }}
+          onMemoFetched={(memoData) => {
+            const receipt = activeReceiptForMemo;
+            if (receipt && receipt.contextId === contextId) {
+              setViewingMemo({ receipt, memo: memoData });
+            }
+          }}
           onOpenOfflineImport={(r) => {
             setActiveReceiptForMemo(r);
             setOfflineImportOpen(true);
@@ -480,6 +505,23 @@ export function ContextDetailPage() {
           receipt={activeReceiptForMemo}
           open={offlineImportOpen}
           onOpenChange={setOfflineImportOpen}
+          onConfirmImport={async (receiptId, txBytes) => {
+            const generation = memoTargetGenerationRef.current;
+            const memo = await importOfflineMemo(receiptId, txBytes);
+            const receipt = activeReceiptForMemo;
+            if (
+              generation !== memoTargetGenerationRef.current ||
+              memoTargetRef.current.contextId !== contextId ||
+              memoTargetRef.current.phase !== phase ||
+              !receipt ||
+              receipt?.id !== receiptId ||
+              receipt.contextId !== contextId
+            ) {
+              throw new Error("Offline memo import was cancelled because the selected context changed.");
+            }
+            setViewingMemo({ receipt, memo });
+            return memo;
+          }}
         />
       </div>
     </WorkspaceGate>

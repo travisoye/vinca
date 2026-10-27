@@ -16,16 +16,21 @@
     G. Failure and cancellation boundaries (wrong passphrases, invalid heights, oversized ranges)
 */
 
-import { describe, expect, it } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { RelayClient } from "@/adapters/relay-client";
 import { VincaWorkerClient } from "@/adapters/worker-client";
+import { WorkspaceProvider, useWorkspace } from "@/context/workspace-context";
 import { LiveScanner } from "@/lib/scanner/live-scanner";
-import type { ContextSummary, CoverageRange, Receipt } from "@/types";
+import type { ReactNode } from "react";
+import type { ContextSummary, CoverageRange, MemoData, Receipt } from "@/types";
 import type {
   OpaqueKeyHandle,
   VincaRelayPort,
+  VincaVaultPort,
   VincaWorkerPort,
   WorkerDecodedKeyResult,
+  WorkerDecryptedMemoResult,
   WorkerScanResult,
 } from "@/adapters/types";
 
@@ -59,6 +64,48 @@ function workerPort(overrides: Partial<VincaWorkerPort>): VincaWorkerPort {
     },
     destroyHandle: async () => {},
     ...overrides,
+  };
+}
+
+function memoTestContext(): ContextSummary {
+  return {
+    id: "ctx-memo-test",
+    label: "Synthetic memo test context",
+    network: "testnet",
+    birthdayHeight: 2_700_000,
+    status: "active",
+    supportedPools: ["orchard"],
+    unsupportedComponents: [],
+    overlappingContextIds: [],
+    coverage: {
+      source: "live-local-scan",
+      birthdayHeight: 2_700_000,
+      scannedRanges: [],
+      gaps: [],
+      lastScannedHeight: null,
+      tipHeight: null,
+      stale: false,
+    },
+    receiptCount: 1,
+    createdAtUtc: "2026-10-27T00:00:00Z",
+    note: null,
+  };
+}
+
+function memoTestReceipt(): Receipt {
+  return {
+    id: "rc-memo-test",
+    contextId: "ctx-memo-test",
+    network: "testnet",
+    pool: "orchard",
+    txIdHex: "ab".repeat(32),
+    actionIndex: 2,
+    recipientAddress: "utest1memo",
+    amountZatoshis: "300000000",
+    blockHeight: 2_700_050,
+    observedUtc: "2026-10-27T00:00:00Z",
+    evidence: "locally-inspected",
+    memo: { state: "not-requested" },
   };
 }
 
@@ -315,28 +362,186 @@ describe("Phase 8: Full Application Integration & Live Scanning", () => {
       });
       const scanner = new LiveScanner(relay, worker);
 
-      const mockReceipt: Receipt = {
-        id: "rc-memo-test",
-        contextId: "ctx-test",
-        network: "testnet",
-        pool: "orchard",
-        txIdHex: "ab".repeat(32),
-        actionIndex: 0,
-        recipientAddress: "utest1memo",
-        amountZatoshis: "300000000",
-        blockHeight: 2_700_050,
-        observedUtc: new Date().toISOString(),
-        evidence: "locally-inspected",
-        memo: { state: "not-requested" },
-      };
+      const mockReceipt = memoTestReceipt();
 
       await expect(
         scanner.fetchAndDecryptMemo(
-          { id: "ctx-test", network: "testnet" } as any,
+          memoTestContext(),
           "vinca-handle-test" as OpaqueKeyHandle,
           mockReceipt,
         ),
       ).rejects.toThrow(/INSPECTION_UNAVAILABLE/);
+    });
+
+    it("fetches only the requested transaction and persists the lossless memo result", async () => {
+      const txBytes = new Uint8Array([5, 0, 0, 128, 9]);
+      const memo: WorkerDecryptedMemoResult = {
+        format: "arbitrary-bytes",
+        text: "",
+        rawBytesHex: "ff" + "00".repeat(511),
+      };
+      const savedReceipts: Receipt[] = [];
+      const relay = relayPort({
+        fetchTransaction: async (_network, txId) => {
+          expect(txId).toBe(memoTestReceipt().txIdHex);
+          return txBytes;
+        },
+      });
+      const worker = workerPort({
+        decryptMemo: async (_handle, bytes, receipt) => {
+          expect(bytes).toEqual(txBytes);
+          expect(receipt).toEqual(memoTestReceipt());
+          return memo;
+        },
+      });
+      const vault = {
+        saveEncryptedReceipt: async (receipt: Receipt) => {
+          savedReceipts.push(receipt);
+        },
+      } as unknown as VincaVaultPort;
+      const scanner = new LiveScanner(relay, worker, vault);
+      const receipt = memoTestReceipt();
+
+      const result = await scanner.fetchAndDecryptMemo(
+        memoTestContext(),
+        "vinca-handle-test" as OpaqueKeyHandle,
+        receipt,
+      );
+
+      expect(result).toEqual(memo);
+      expect(savedReceipts).toHaveLength(1);
+      expect(savedReceipts[0]).toEqual({
+        ...receipt,
+        memo: { state: "available", ...memo },
+      });
+      expect(receipt.memo).toEqual({ state: "not-requested" });
+    });
+
+    it("imports offline transaction bytes without making any relay request", async () => {
+      const fetchTransaction = vi.fn(async () => new Uint8Array([1]));
+      const memo: WorkerDecryptedMemoResult = {
+        format: "no-memo",
+        text: "",
+        rawBytesHex: "f6" + "00".repeat(511),
+      };
+      const relay = relayPort({ fetchTransaction });
+      const worker = workerPort({
+        decryptMemo: async () => memo,
+      });
+      const scanner = new LiveScanner(relay, worker);
+
+      await expect(
+        scanner.importOfflineMemo(
+          memoTestContext(),
+          "vinca-handle-test" as OpaqueKeyHandle,
+          memoTestReceipt(),
+          new Uint8Array([5, 0, 0, 128]),
+        ),
+      ).resolves.toEqual(memo);
+      expect(fetchTransaction).not.toHaveBeenCalled();
+    });
+
+    it("keeps a failed encrypted memo write retryable and does not mutate the receipt", async () => {
+      const receipt = memoTestReceipt();
+      const memoTextBytes = Array.from(new TextEncoder().encode("synthetic memo"));
+      const memo: WorkerDecryptedMemoResult = {
+        format: "text",
+        text: "synthetic memo",
+        rawBytesHex:
+          memoTextBytes.map((byte) => byte.toString(16).padStart(2, "0")).join("") +
+          "00".repeat(512 - memoTextBytes.length),
+      };
+      const saveEncryptedReceipt = vi
+        .fn<(receipt: Receipt) => Promise<void>>()
+        .mockRejectedValueOnce(new Error("Encrypted receipt write failed."))
+        .mockResolvedValueOnce(undefined);
+      const scanner = new LiveScanner(
+        relayPort({ fetchTransaction: async () => new Uint8Array([5, 0, 0, 128]) }),
+        workerPort({ decryptMemo: async () => memo }),
+        { saveEncryptedReceipt } as unknown as VincaVaultPort,
+      );
+
+      await expect(
+        scanner.fetchAndDecryptMemo(
+          memoTestContext(),
+          "vinca-handle-test" as OpaqueKeyHandle,
+          receipt,
+        ),
+      ).rejects.toThrow("Encrypted receipt write failed.");
+      expect(receipt.memo).toEqual({ state: "not-requested" });
+
+      await expect(
+        scanner.fetchAndDecryptMemo(
+          memoTestContext(),
+          "vinca-handle-test" as OpaqueKeyHandle,
+          receipt,
+        ),
+      ).resolves.toEqual(memo);
+      expect(saveEncryptedReceipt).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not persist a memo when the workspace request becomes stale during decryption", async () => {
+      const saveEncryptedReceipt = vi.fn(async () => {});
+      const scanner = new LiveScanner(
+        relayPort({ fetchTransaction: async () => new Uint8Array([5, 0, 0, 128]) }),
+        workerPort({
+          decryptMemo: async () => {
+            current = false;
+            const memoTextBytes = Array.from(new TextEncoder().encode("late synthetic memo"));
+            return {
+              format: "text",
+              text: "late synthetic memo",
+              rawBytesHex:
+                memoTextBytes.map((byte) => byte.toString(16).padStart(2, "0")).join("") +
+                "00".repeat(512 - memoTextBytes.length),
+            };
+          },
+        }),
+        { saveEncryptedReceipt } as unknown as VincaVaultPort,
+      );
+      let current = true;
+
+      await expect(
+        scanner.fetchAndDecryptMemo(
+          memoTestContext(),
+          "vinca-handle-test" as OpaqueKeyHandle,
+          memoTestReceipt(),
+          () => current,
+        ),
+      ).rejects.toThrow(/cancelled because the workspace changed/i);
+      expect(saveEncryptedReceipt).not.toHaveBeenCalled();
+    });
+
+    it("returns an already saved memo after reopening without a transaction relay request", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: "ready",
+          configured_networks: ["testnet"],
+          upstream_status: [{ network: "testnet", reachable: true }],
+        }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const wrapper = ({ children }: { children: ReactNode }) => (
+        <WorkspaceProvider>{children}</WorkspaceProvider>
+      );
+      const { result, unmount } = renderHook(() => useWorkspace(), { wrapper });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+      let savedMemo: MemoData | undefined;
+      await act(async () => {
+        savedMemo = await result.current.requestMemo("rc-alpha-3");
+      });
+
+      expect(savedMemo).toEqual({
+        format: "text",
+        text: "Sample invoice memo, obtained from the offline import dialogue.",
+        rawBytesHex: undefined,
+      });
+      expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("/tx/"))).toBe(true);
+
+      unmount();
+      vi.unstubAllGlobals();
     });
   });
 

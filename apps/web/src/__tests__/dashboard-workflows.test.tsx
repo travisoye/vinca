@@ -9,8 +9,10 @@ import { MemoryRouter } from "react-router-dom";
 import App from "@/App";
 import {
   MemoPrivacyDialog,
+  MemoViewer,
   OfflineMemoImportDialog,
 } from "@/components/dashboard/memo-dialog";
+import type { MemoData } from "@/adapters/types";
 import type { Receipt } from "@/types";
 
 const memoDialogReceipt: Receipt = {
@@ -147,12 +149,17 @@ describe("Phase 3 Dashboard & Sample Workflows", () => {
     });
 
     it("opens memo text and closes the disclosure only after a successful fetch", async () => {
-      let resolveFetch!: (memoText: string) => void;
+      const memoData: MemoData = {
+        format: "text",
+        text: "Memo content from the worker",
+        rawBytesHex: "00".repeat(512),
+      };
+      let resolveFetch!: (memo: MemoData) => void;
       const onOpenChange = vi.fn();
       const onMemoFetched = vi.fn();
       const onConfirmFetch = vi.fn(
         () =>
-          new Promise<string>((resolve) => {
+          new Promise<MemoData>((resolve) => {
             resolveFetch = resolve;
           }),
       );
@@ -174,27 +181,111 @@ describe("Phase 3 Dashboard & Sample Workflows", () => {
       ).toBeDisabled();
       expect(onOpenChange).not.toHaveBeenCalled();
 
-      resolveFetch("Memo content from the worker");
+      resolveFetch(memoData);
       await waitFor(() =>
-        expect(onMemoFetched).toHaveBeenCalledWith("Memo content from the worker"),
+        expect(onMemoFetched).toHaveBeenCalledWith(memoData),
       );
       expect(onOpenChange).toHaveBeenCalledWith(false);
     });
 
-    it("does not present offline transaction data as a decrypted memo", () => {
+    it("imports bounded raw transaction hex without invoking relay callbacks", async () => {
+      const memoData: MemoData = {
+        format: "no-memo",
+        text: "",
+        rawBytesHex: "f6" + "00".repeat(511),
+      };
+      const onConfirmImport = vi.fn().mockResolvedValue(memoData);
+      const onOpenChange = vi.fn();
+      render(
+        <OfflineMemoImportDialog
+          receipt={memoDialogReceipt}
+          open
+          onOpenChange={onOpenChange}
+          onConfirmImport={onConfirmImport}
+        />,
+      );
+
+      fireEvent.change(screen.getByRole("textbox", { name: /raw transaction hex/i }), {
+        target: { value: "05000080" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /import and decrypt/i }));
+
+      await waitFor(() => {
+        expect(onConfirmImport).toHaveBeenCalledTimes(1);
+        expect(onConfirmImport).toHaveBeenCalledWith(
+          memoDialogReceipt.id,
+          new Uint8Array([5, 0, 0, 128]),
+        );
+        expect(onOpenChange).toHaveBeenCalledWith(false);
+      });
+    });
+
+    it("rejects malformed offline transaction input before calling the importer", async () => {
+      const onConfirmImport = vi.fn();
       render(
         <OfflineMemoImportDialog
           receipt={memoDialogReceipt}
           open
           onOpenChange={vi.fn()}
+          onConfirmImport={onConfirmImport}
         />,
       );
 
-      expect(
-        screen.getByText(/Offline transaction parsing and memo decryption are not implemented yet/i),
-      ).toBeInTheDocument();
-      expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /decrypt locally/i })).not.toBeInTheDocument();
+      fireEvent.change(screen.getByRole("textbox", { name: /raw transaction hex/i }), {
+        target: { value: '{"hex":"05000080"}' },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /import and decrypt/i }));
+
+      expect(await screen.findByText(/Paste only an even-length raw transaction hex/i)).toBeInTheDocument();
+      expect(onConfirmImport).not.toHaveBeenCalled();
+    });
+
+    it("renders untrusted text without interpreting it as HTML", () => {
+      const memo: MemoData = {
+        format: "text",
+        text: "<script>alert(1)</script>\nsecond line",
+        rawBytesHex: "00".repeat(512),
+      };
+      render(
+        <MemoViewer memo={memo} receipt={memoDialogReceipt} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByRole("dialog").textContent).toContain(memo.text);
+      expect(document.querySelector("script")).toBeNull();
+    });
+
+    it.each([
+      ["no-memo", "No memo present"],
+      ["arbitrary-bytes", "Arbitrary bytes"],
+      ["future-format", "Future memo format"],
+      ["legacy-nontext", "Legacy non-text memo"],
+    ] as const)("shows %s distinctly and preserves its raw bytes", (format, label) => {
+      const memo: MemoData = {
+        format,
+        text: "",
+        rawBytesHex: "f6" + "00".repeat(511),
+      };
+      render(
+        <MemoViewer memo={memo} receipt={memoDialogReceipt} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText(label)).toBeInTheDocument();
+      expect(memo.rawBytesHex).toBeDefined();
+      expect(screen.getByRole("dialog").textContent).toContain(memo.rawBytesHex);
+    });
+
+    it("renders empty text distinctly from a no-memo sentinel", () => {
+      const memo: MemoData = {
+        format: "text",
+        text: "",
+        rawBytesHex: "00".repeat(512),
+      };
+      render(
+        <MemoViewer memo={memo} receipt={memoDialogReceipt} onClose={vi.fn()} />,
+      );
+
+      expect(screen.getByText("This text memo is empty.")).toBeInTheDocument();
+      expect(screen.queryByText("No memo is present in this transaction output.")).toBeNull();
     });
 
     it("renders archive and deletion dialogs with non-revocation boundaries", () => {

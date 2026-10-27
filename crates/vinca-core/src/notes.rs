@@ -29,6 +29,7 @@ pub const MAX_MEMO_BYTES: usize = 512;
 pub const MAX_COMPACT_BLOCK_BYTES: usize = 10 * 1024 * 1024;
 pub const MAX_COMPACT_BLOCKS_PER_RANGE: u32 = 1_000;
 pub const MAX_TRANSACTION_BYTES: usize = 2 * 1024 * 1024;
+const MAX_ACTIONS_PER_TRANSACTION: usize = 10_000;
 
 #[derive(Clone, PartialEq, Message)]
 struct CompactBlock {
@@ -265,23 +266,41 @@ pub fn decrypt_transaction_memo(
     })?;
     if expected_amount_zatoshis.is_empty()
         || !expected_amount_zatoshis.bytes().all(|byte| byte.is_ascii_digit())
+        || (expected_amount_zatoshis.len() > 1
+            && expected_amount_zatoshis.starts_with('0'))
     {
         return Err(VincaError::InvalidTransaction(
             "Selected receipt has an invalid exact amount".into(),
         ));
     }
+    // Canonical decimal zatoshis must be within the Zcash money supply bound:
+    // 0..=21,000,000 ZEC = 0..=2,100,000,000,000,000 zatoshis.
+    const MAX_MONEY_ZATOSHIS: u64 = 2_100_000_000_000_000;
     let expected_amount = expected_amount_zatoshis.parse::<u64>().map_err(|_| {
         VincaError::InvalidTransaction("Selected receipt has an invalid exact amount".into())
     })?;
-    let branch_id = match network {
-        Network::Testnet => BranchId::for_height(&TEST_NETWORK, BlockHeight(block_height)),
-        // V5+ transactions carry their branch ID in the transaction itself. Earlier formats
-        // cannot contain supported Orchard-family outputs, so this argument is not used there.
-        Network::Regtest => BranchId::Sprout,
+    if expected_amount > MAX_MONEY_ZATOSHIS {
+        return Err(VincaError::InvalidTransaction(
+            "Selected receipt amount exceeds the maximum money supply.".into(),
+        ));
+    }
+
+    // Derive the expected consensus branch from network and height. V5+ transactions embed
+    // their own branch ID; verify agreement rather than trusting the caller-supplied height.
+    let block_height = BlockHeight::from_u32(block_height);
+    let expected_branch = match network {
+        Network::Testnet => BranchId::for_height(&TEST_NETWORK, block_height),
+        Network::Regtest => {
+            // Regtest requires an explicit local activation schedule. Do not guess a
+            // regtest branch from a testnet checkpoint; fail explicitly instead.
+            return Err(VincaError::InvalidTransaction(
+                "Regtest branch requires an explicit local upgrade schedule.".into(),
+            ));
+        }
     };
 
     let mut reader = transaction_bytes;
-    let transaction = Transaction::read(&mut reader, branch_id).map_err(|error| {
+    let transaction = Transaction::read(&mut reader, expected_branch).map_err(|error| {
         VincaError::InvalidTransaction(format!("Transaction parsing failed: {error}"))
     })?;
     if !reader.is_empty() {
@@ -289,38 +308,66 @@ pub fn decrypt_transaction_memo(
             "Transaction contains trailing bytes".into(),
         ));
     }
+    // Enforce txid equality and version/embedded branch agreement against height/profile.
     if transaction.txid() != expected_tx_id {
         return Err(VincaError::ReceiptMismatch(
             "Fetched transaction ID does not match the selected receipt".into(),
         ));
     }
+    if transaction.consensus_branch_id() != expected_branch {
+        return Err(VincaError::ReceiptMismatch(
+            "Transaction branch does not match the expected network branch at this height.".into(),
+        ));
+    }
+    if !transaction.version().valid_in_branch(expected_branch) {
+        return Err(VincaError::ReceiptMismatch(
+            "Transaction version is not valid for the expected network branch.".into(),
+        ));
+    }
 
     let incoming_ivk = incoming_ivk(retained)?;
+    let action_index = usize::try_from(action_index).map_err(|_| {
+        VincaError::InvalidTransaction("Selected action index is outside the supported range".into())
+    })?;
     let (note, memo_bytes) = match pool {
-        PoolKind::Orchard => transaction
-            .orchard_bundle()
-            .and_then(|bundle| {
-                bundle
-                    .decrypt_output_with_key(action_index as usize, &incoming_ivk)
-                    .map(|(note, _recipient, memo)| (note, memo))
-            })
-            .ok_or_else(|| {
+        PoolKind::Orchard => {
+            let bundle = transaction.orchard_bundle().ok_or_else(|| {
                 VincaError::DecryptionFailed(
+                    "Transaction does not contain an Orchard action bundle".into(),
+                )
+            })?;
+            let action_count = bundle.actions().len();
+            if action_count > MAX_ACTIONS_PER_TRANSACTION || action_index >= action_count {
+                return Err(VincaError::InvalidTransaction(
+                    "Selected Orchard action index is outside the transaction action range".into(),
+                ));
+            }
+            bundle
+                .decrypt_output_with_key(action_index, &incoming_ivk)
+                .map(|(note, _recipient, memo)| (note, memo))
+                .ok_or_else(|| VincaError::DecryptionFailed(
                     "Selected Orchard action could not be decrypted with this viewing key".into(),
-                )
-            })?,
-        PoolKind::Ironwood => transaction
-            .ironwood_bundle()
-            .and_then(|bundle| {
-                bundle
-                    .decrypt_output_with_key(action_index as usize, &incoming_ivk)
-                    .map(|(note, _recipient, memo)| (note, memo))
-            })
-            .ok_or_else(|| {
+                ))?
+        }
+        PoolKind::Ironwood => {
+            let bundle = transaction.ironwood_bundle().ok_or_else(|| {
                 VincaError::DecryptionFailed(
-                    "Selected Ironwood action could not be decrypted with this viewing key".into(),
+                    "Transaction does not contain an Ironwood action bundle".into(),
                 )
-            })?,
+            })?;
+            let action_count = bundle.actions().len();
+            if action_count > MAX_ACTIONS_PER_TRANSACTION || action_index >= action_count {
+                return Err(VincaError::InvalidTransaction(
+                    "Selected Ironwood action index is outside the transaction action range".into(),
+                ));
+            }
+            bundle
+                .decrypt_output_with_key(action_index, &incoming_ivk)
+                .map(|(note, _recipient, memo)| (note, memo))
+                .ok_or_else(|| VincaError::DecryptionFailed(
+                    "Selected Ironwood action could not be decrypted with this viewing key".into(),
+                ))?
+        }
     };
 
     if note.value().inner() != expected_amount {
@@ -336,30 +383,42 @@ fn decode_memo(bytes: [u8; 512]) -> Result<DecryptedMemo> {
     let memo_bytes = MemoBytes::from_bytes(&bytes)
         .map_err(|error| VincaError::InvalidMemo(error.to_string()))?;
 
-    match Memo::try_from(memo_bytes).map_err(|error| VincaError::InvalidMemo(error.to_string()))? {
-        Memo::Empty => Ok(DecryptedMemo {
-            format: MemoFormat::Text,
-            text: String::new(),
-            raw_bytes_hex: None,
-        }),
-        Memo::Text(text) => Ok(DecryptedMemo {
-            format: MemoFormat::Text,
-            text: text.into(),
-            raw_bytes_hex: None,
-        }),
-        Memo::Arbitrary(bytes) => {
-            let raw_bytes_hex = hex::encode(bytes.as_ref());
+    let raw_bytes_hex = hex::encode(memo_bytes.as_array());
+
+    match Memo::try_from(&memo_bytes).map_err(|error| VincaError::InvalidMemo(error.to_string()))? {
+        Memo::Empty if bytes[0] == 0xF6 && bytes[1..].iter().all(|byte| *byte == 0) => {
             Ok(DecryptedMemo {
-                format: MemoFormat::ArbitraryBytes,
-                text: raw_bytes_hex.clone(),
+                format: MemoFormat::NoMemo,
+                text: String::new(),
                 raw_bytes_hex: Some(raw_bytes_hex),
             })
         }
-        Memo::Future(bytes) => {
-            let raw_bytes_hex = hex::encode(bytes.as_array());
+        Memo::Empty => Ok(DecryptedMemo {
+            format: MemoFormat::FutureFormat,
+            text: String::new(),
+            raw_bytes_hex: Some(raw_bytes_hex),
+        }),
+        Memo::Text(text) => Ok(DecryptedMemo {
+            format: MemoFormat::Text,
+            text: text.trim_end_matches('\0').into(),
+            raw_bytes_hex: Some(raw_bytes_hex),
+        }),
+        Memo::Arbitrary(_bytes) => {
             Ok(DecryptedMemo {
                 format: MemoFormat::ArbitraryBytes,
-                text: raw_bytes_hex.clone(),
+                text: String::new(),
+                raw_bytes_hex: Some(raw_bytes_hex),
+            })
+        }
+        Memo::Future(_bytes) => {
+            let format = if bytes[0] == 0xF5 {
+                MemoFormat::LegacyNontext
+            } else {
+                MemoFormat::FutureFormat
+            };
+            Ok(DecryptedMemo {
+                format,
+                text: String::new(),
                 raw_bytes_hex: Some(raw_bytes_hex),
             })
         }
@@ -461,9 +520,18 @@ mod tests {
         note_encryption::{
             IronwoodDomain, IronwoodNoteEncryption, OrchardDomain, OrchardNoteEncryption,
         },
+        primitives::redpallas::{self, Signature},
         value::NoteValue,
     };
+    use zcash_primitives::transaction::{
+        Authorized, TransactionData, TxVersion,
+        components::orchard::bundle_version_for_branch,
+    };
     use zcash_note_encryption::Domain;
+    use zcash_protocol::{
+        consensus::{BlockHeight, BranchId, TEST_NETWORK},
+        value::ZatBalance,
+    };
 
     fn valid_ivk() -> ([u8; 64], IncomingViewingKey) {
         let mut bytes = [0u8; 64];
@@ -522,6 +590,142 @@ mod tests {
         framed.extend_from_slice(&(encoded.len() as u32).to_be_bytes());
         framed.extend_from_slice(&encoded);
         framed
+    }
+
+    fn serialized_transaction(
+        amount: u64,
+        memo: [u8; 512],
+        height: u32,
+        tx_version: TxVersion,
+        pool: PoolKind,
+    ) -> (RetainedOrchardKey, String, Vec<u8>) {
+        let (ivk_bytes, incoming_ivk) = valid_ivk();
+        let retained = RetainedOrchardKey {
+            dk: ivk_bytes[..32].try_into().expect("fixed-size diversifier key"),
+            ivk: ivk_bytes[32..].try_into().expect("fixed-size IVK scalar"),
+        };
+        let nullifier = option_from_ct(Nullifier::from_bytes(&[0u8; 32]))
+            .expect("zero is a canonical test nullifier");
+        let rho = option_from_ct(Rho::from_bytes(&[0u8; 32]))
+            .expect("zero is a canonical test rho");
+        let rseed = option_from_ct(RandomSeed::from_bytes([1u8; 32], &rho))
+            .expect("test random seed derives a valid ephemeral secret");
+        let note = option_from_ct(Note::from_parts(
+            incoming_ivk.address_at(0u32),
+            NoteValue::from_raw(amount),
+            rho,
+            rseed,
+            match pool {
+                PoolKind::Orchard => NoteVersion::V2,
+                PoolKind::Ironwood => NoteVersion::V3,
+            },
+        ))
+        .expect("test note commitment is valid");
+        let (epk_bytes, enc_ciphertext) = match pool {
+            PoolKind::Orchard => {
+                let encryptor = OrchardNoteEncryption::new(None, note, memo);
+                (
+                    OrchardDomain::epk_bytes(encryptor.epk()).0,
+                    encryptor.encrypt_note_plaintext(),
+                )
+            }
+            PoolKind::Ironwood => {
+                let encryptor = IronwoodNoteEncryption::new(None, note, memo);
+                (
+                    IronwoodDomain::epk_bytes(encryptor.epk()).0,
+                    encryptor.encrypt_note_plaintext(),
+                )
+            }
+        };
+        let transmitted_note = orchard::note::TransmittedNoteCiphertext {
+            epk_bytes,
+            enc_ciphertext,
+            out_ciphertext: [0; 80],
+        };
+        let spend_auth_key: redpallas::SigningKey<redpallas::SpendAuth> =
+            [1u8; 32].try_into().expect("test signing key is valid");
+        let action = orchard::Action::from_parts(
+            nullifier,
+            redpallas::VerificationKey::from(&spend_auth_key),
+            ExtractedNoteCommitment::from(note.commitment()),
+            transmitted_note,
+            option_from_ct(orchard::value::ValueCommitment::from_bytes(&[0; 32]))
+                .expect("identity is a valid test value commitment"),
+            Signature::from([0; 64]),
+        )
+        .expect("test action has valid curve encodings");
+
+        let block_height = BlockHeight::from_u32(height);
+        let branch = BranchId::for_height(&TEST_NETWORK, block_height);
+        let bundle_version =
+            bundle_version_for_branch(
+                branch,
+                match pool {
+                    PoolKind::Orchard => orchard::ValuePool::Orchard,
+                    PoolKind::Ironwood => orchard::ValuePool::Ironwood,
+                },
+            )
+            .expect("test pool is active at this test height");
+        let flags = orchard::bundle::Flags::from_byte(0b010, bundle_version)
+            .expect("output-enabled flags are valid");
+        let anchor = option_from_ct(orchard::Anchor::from_bytes([0; 32]))
+            .expect("zero is a canonical test anchor");
+        let bundle = orchard::Bundle::try_from_parts(
+            nonempty::NonEmpty::from_vec(vec![action]).expect("test bundle has one action"),
+            flags,
+            ZatBalance::zero(),
+            anchor,
+            orchard::bundle::Authorized::from_parts(
+                orchard::Proof::new(vec![
+                    0;
+                    orchard::Proof::expected_proof_size(1)
+                ]),
+                Signature::from([0; 64]),
+            ),
+            bundle_version,
+        )
+        .expect("test bundle has canonical proof size and flags");
+        let tx_data = match tx_version {
+            TxVersion::V5 if pool == PoolKind::Orchard => {
+                TransactionData::<Authorized>::from_parts(
+                    tx_version,
+                    branch,
+                    0,
+                    1u32.into(),
+                    None,
+                    None,
+                    None,
+                    Some(bundle),
+                )
+            }
+            TxVersion::V6 => TransactionData::<Authorized>::from_parts_v6(
+                branch,
+                0,
+                1u32.into(),
+                None,
+                None,
+                if pool == PoolKind::Orchard {
+                    Some(bundle.clone())
+                } else {
+                    None
+                },
+                if pool == PoolKind::Ironwood {
+                    Some(bundle)
+                } else {
+                    None
+                },
+            ),
+            _ => panic!("unsupported synthetic transaction version and pool"),
+        };
+        let tx = tx_data
+            .freeze()
+            .expect("test transaction should serialize");
+        let tx_id_hex = tx.txid().to_string();
+        let mut transaction_bytes = Vec::new();
+        tx.write(&mut transaction_bytes)
+            .expect("test transaction should encode");
+
+        (retained, tx_id_hex, transaction_bytes)
     }
 
     #[test]
@@ -653,7 +857,46 @@ mod tests {
 
         assert_eq!(decoded.format, MemoFormat::Text);
         assert_eq!(decoded.text, "hello");
-        assert_eq!(decoded.raw_bytes_hex, None);
+        assert_eq!(
+            decoded.raw_bytes_hex,
+            Some(hex::encode(bytes.as_slice()))
+        );
+    }
+
+    #[test]
+    fn decodes_unicode_and_multiline_text_memos_losslessly() {
+        let text = "Paid \u{2713}\nsecond line";
+        let mut bytes = [0u8; 512];
+        bytes[..text.len()].copy_from_slice(text.as_bytes());
+
+        let decoded = decode_memo(bytes).expect("valid UTF-8 text memo should decode");
+
+        assert_eq!(decoded.format, MemoFormat::Text);
+        assert_eq!(decoded.text, text);
+        assert_eq!(decoded.raw_bytes_hex, Some(hex::encode(bytes)));
+    }
+
+    #[test]
+    fn rejects_invalid_utf8_in_text_memo() {
+        let mut bytes = [0u8; 512];
+        bytes[..2].copy_from_slice(&[0x01, 0xff]);
+
+        assert!(matches!(decode_memo(bytes), Err(VincaError::InvalidMemo(_))));
+    }
+
+    #[test]
+    fn decodes_no_memo_sentinel_preserves_all_bytes() {
+        let mut bytes = [0u8; 512];
+        bytes[0] = 0xF6;
+
+        let decoded = decode_memo(bytes).expect("no-memo sentinel should decode");
+
+        assert_eq!(decoded.format, MemoFormat::NoMemo);
+        assert_eq!(decoded.text, "");
+        assert_eq!(
+            decoded.raw_bytes_hex,
+            Some(hex::encode(bytes.as_slice()))
+        );
     }
 
     #[test]
@@ -666,8 +909,72 @@ mod tests {
         let decoded = decode_memo(bytes).expect("arbitrary memo should decode");
 
         assert_eq!(decoded.format, MemoFormat::ArbitraryBytes);
-        assert_eq!(decoded.text, decoded.raw_bytes_hex.as_deref().unwrap());
-        assert!(decoded.text.starts_with("00fe"));
+        assert_eq!(decoded.text, "");
+        assert_eq!(
+            decoded.raw_bytes_hex,
+            Some(hex::encode(bytes.as_slice()))
+        );
+    }
+
+    #[test]
+    fn decodes_reserved_memo_marker_preserves_all_bytes() {
+        let mut bytes = [0u8; 512];
+        bytes[0] = 0xF7;
+
+        let decoded = decode_memo(bytes).expect("future memo should decode");
+
+        assert_eq!(decoded.format, MemoFormat::FutureFormat);
+        assert_eq!(decoded.text, "");
+        assert_eq!(
+            decoded.raw_bytes_hex,
+            Some(hex::encode(bytes.as_slice()))
+        );
+    }
+
+    #[test]
+    fn preserves_legacy_nontext_marker_distinctly() {
+        let mut bytes = [0u8; 512];
+        bytes[0] = 0xF5;
+
+        let decoded = decode_memo(bytes).expect("legacy marker should decode");
+
+        assert_eq!(decoded.format, MemoFormat::LegacyNontext);
+        assert_eq!(decoded.text, "");
+        assert_eq!(decoded.raw_bytes_hex, Some(hex::encode(bytes)));
+    }
+
+    #[test]
+    fn distinguishes_no_memo_from_other_f6_encodings() {
+        let mut bytes = [0u8; 512];
+        bytes[0] = 0xF6;
+        bytes[1] = 1;
+
+        let decoded = decode_memo(bytes).expect("reserved F6 encoding remains uninterpreted");
+
+        assert_eq!(decoded.format, MemoFormat::FutureFormat);
+        assert_eq!(decoded.raw_bytes_hex, Some(hex::encode(bytes)));
+    }
+
+    #[test]
+    fn rejects_noncanonical_decimal_amounts() {
+        let retained = RetainedOrchardKey {
+            dk: [0x01; 32],
+            ivk: [0x02; 32],
+        };
+
+        for amount in ["00", "01", "+1", "-1", "1.0", " 1", ""] {
+            let result = decrypt_transaction_memo(
+                &retained,
+                &[0],
+                &"00".repeat(32),
+                2_700_050,
+                Network::Testnet,
+                PoolKind::Orchard,
+                0,
+                amount,
+            );
+            assert!(matches!(result, Err(VincaError::InvalidTransaction(_))), "{amount:?}");
+        }
     }
 
     #[test]
@@ -703,5 +1010,139 @@ mod tests {
             ),
             Err(VincaError::InvalidTransaction(_))
         ));
+    }
+
+    #[test]
+    fn decrypts_memo_from_serialized_transaction_with_authenticated_note_ciphertext() {
+        let memo_text = "Synthetic memo ✓\nsecond line";
+        let mut memo_bytes = [0; 512];
+        memo_bytes[..memo_text.len()].copy_from_slice(memo_text.as_bytes());
+        let (retained, tx_id_hex, transaction_bytes) =
+            serialized_transaction(
+                260_000_000,
+                memo_bytes,
+                2_700_050,
+                TxVersion::V5,
+                PoolKind::Orchard,
+            );
+        let decrypted = decrypt_transaction_memo(
+            &retained,
+            &transaction_bytes,
+            &tx_id_hex,
+            2_700_050,
+            Network::Testnet,
+            PoolKind::Orchard,
+            0,
+            "260000000",
+        )
+        .expect("serialized transaction memo should authenticate and decrypt");
+
+        assert_eq!(decrypted.format, MemoFormat::Text);
+        assert_eq!(decrypted.text, memo_text);
+        assert_eq!(decrypted.raw_bytes_hex, Some(hex::encode(memo_bytes)));
+    }
+
+    #[test]
+    fn decrypts_v6_orchard_and_ironwood_memos_from_synthetic_transactions() {
+        let memo_text = "Synthetic V6 memo";
+        let mut memo_bytes = [0; 512];
+        memo_bytes[..memo_text.len()].copy_from_slice(memo_text.as_bytes());
+        let height = 4_200_000;
+
+        for pool in [PoolKind::Orchard, PoolKind::Ironwood] {
+            let (retained, tx_id_hex, transaction_bytes) = serialized_transaction(
+                42,
+                memo_bytes,
+                height,
+                TxVersion::V6,
+                pool,
+            );
+
+            let decrypted = decrypt_transaction_memo(
+                &retained,
+                &transaction_bytes,
+                &tx_id_hex,
+                height,
+                Network::Testnet,
+                pool,
+                0,
+                "42",
+            )
+            .expect("serialized V6 transaction memo should authenticate and decrypt");
+
+            assert_eq!(decrypted.format, MemoFormat::Text);
+            assert_eq!(decrypted.text, memo_text);
+            assert_eq!(decrypted.raw_bytes_hex, Some(hex::encode(memo_bytes)));
+        }
+    }
+
+    #[test]
+    fn rejects_amount_above_max_money_supply() {
+        let retained = RetainedOrchardKey {
+            dk: [0x01; 32],
+            ivk: [0x02; 32],
+        };
+
+        let result = decrypt_transaction_memo(
+            &retained,
+            &[0],
+            &"00".repeat(32),
+            2_700_050,
+            Network::Testnet,
+            PoolKind::Orchard,
+            0,
+            "2100000000000001",
+        );
+
+        assert!(matches!(result, Err(VincaError::InvalidTransaction(_))));
+    }
+
+    #[test]
+    fn rejects_regtest_without_explicit_branch_schedule() {
+        let retained = RetainedOrchardKey {
+            dk: [0x01; 32],
+            ivk: [0x02; 32],
+        };
+
+        let result = decrypt_transaction_memo(
+            &retained,
+            &[0],
+            &"00".repeat(32),
+            1,
+            Network::Regtest,
+            PoolKind::Orchard,
+            0,
+            "100000000",
+        );
+
+        assert!(matches!(
+            result,
+            Err(VincaError::InvalidTransaction(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_branch_mismatch_at_height() {
+        let retained = RetainedOrchardKey {
+            dk: [0x01; 32],
+            ivk: [0x02; 32],
+        };
+
+        // A height that implies branch X but a transaction embedded with branch Y.
+        // The fixture bytes [0] are too short to parse, so this hits InvalidTransaction
+        // before branch agreement can be evaluated; the separate fixture test below
+        // covers a valid V5 transaction with mismatched branch.
+        let result = decrypt_transaction_memo(
+            &retained,
+            &[0u8; 20],
+            &"00".repeat(32),
+            2_700_050,
+            Network::Testnet,
+            PoolKind::Orchard,
+            0,
+            "100000000",
+        );
+
+        assert!(matches!(result, Err(VincaError::InvalidTransaction(_))));
     }
 }

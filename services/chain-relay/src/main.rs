@@ -34,6 +34,10 @@ mod routes;
 mod upstream;
 mod validation;
 
+#[cfg(test)]
+#[path = "../tests/relay_tests.rs"]
+mod relay_tests;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 

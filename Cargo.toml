@@ -31,3 +31,6 @@ anyhow = "1.0"
 orchard = { version = "0.16.0", default-features = false, features = ["std", "zeroize"] }
 prost = "0.13"
 zcash_note_encryption = "0.5.1"
+
+[patch.crates-io]
+zcash_transparent = { path = "vendor/zcash_transparent" }

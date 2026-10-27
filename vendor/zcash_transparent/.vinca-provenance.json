@@ -1,0 +1,11 @@
+{
+  "crate": "zcash_transparent",
+  "version": "0.11.0",
+  "source": "https://crates.io/api/v1/crates/zcash_transparent/0.11.0/download",
+  "archiveSha256": "eb804d0179500e9543502dd6dfa178826617107897e6fe171241e5b767b7a0dd",
+  "upstreamRepository": "https://github.com/zcash/librustzcash",
+  "upstreamCommit": "c8b579f0b75a90722162f42af790ae692a57a1ff",
+  "upstreamPath": "zcash_transparent",
+  "license": "MIT OR Apache-2.0",
+  "patch": "Enable zcash_script/descriptor only through transparent-inputs; all Rust sources and upstream license notices are unchanged."
+}

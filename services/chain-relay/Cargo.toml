@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Public blockchain-data relay for the Vinca disclosure toolkit (testnet/regtest only)"
+autotests = false
 
 [[bin]]
 name = "vinca-chain-relay"

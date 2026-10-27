@@ -68,7 +68,6 @@ pub async fn get_transaction(
         // Log cache hit WITHOUT the full txid (privacy-redacted).
         tracing::debug!(
             network = %network,
-            txid_prefix = &txid_hex[..8],
             "Transaction cache hit"
         );
         return Ok(tx_bytes_response(cached));
@@ -86,10 +85,8 @@ pub async fn get_transaction(
     let tx_bytes = match client.get_transaction(&txid_hex).await {
         Ok(bytes) => bytes,
         Err(err) => {
-            // Log at WARN with only the first 8 chars of the txid.
             tracing::warn!(
                 network = %network,
-                txid_prefix = &txid_hex[..8],
                 error = %err,
                 "Upstream transaction fetch failed"
             );

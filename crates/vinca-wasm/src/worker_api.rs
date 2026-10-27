@@ -111,7 +111,7 @@ pub fn handle_request(req: WorkerRequest) -> WorkerResponse {
             let temp_handle = "pending".to_string();
             match decode_uivk(&raw_key, network, temp_handle, label) {
                 Ok(mut decoded) => {
-                    let opaque_handle = store_key(decoded.retained_orchard);
+                    let opaque_handle = store_key(decoded.retained_orchard, decoded.network);
                     decoded.summary.handle = opaque_handle;
                     let mut declared_unretained = Vec::new();
                     for component in &decoded.summary.components {
@@ -159,7 +159,7 @@ pub fn handle_request(req: WorkerRequest) -> WorkerResponse {
                 pk_d: pk_d_bytes,
             };
 
-            let res = with_key(&handle, |key| {
+            let res = with_key(&handle, |key, _| {
                 Ok(validate_orchard_receiver(key, &receiver))
             });
 
@@ -169,8 +169,8 @@ pub fn handle_request(req: WorkerRequest) -> WorkerResponse {
             }
         }
         WorkerRequest::CompareContexts { handle_a, handle_b } => {
-            let res = with_key(&handle_a, |key_a| {
-                with_key(&handle_b, |key_b| {
+            let res = with_key(&handle_a, |key_a, _| {
+                with_key(&handle_b, |key_b, _| {
                     Ok(compare_orchard_keys(key_a, key_b))
                 })
             });
@@ -181,7 +181,7 @@ pub fn handle_request(req: WorkerRequest) -> WorkerResponse {
             }
         }
         WorkerRequest::InspectCompactActions { handle, actions } => {
-            let res = with_key(&handle, |key| {
+            let res = with_key(&handle, |key, _| {
                 inspect_compact_actions(key, &actions)
             });
 
@@ -206,7 +206,12 @@ pub fn handle_request(req: WorkerRequest) -> WorkerResponse {
                     MAX_TRANSACTION_BYTES,
                 ));
             }
-            let res = with_key(&handle, |key| {
+            let res = with_key(&handle, |key, decoded_network| {
+                if decoded_network != network {
+                    return Err(VincaError::ReceiptMismatch(
+                        "The selected receipt does not belong to this viewing-key network.".into(),
+                    ));
+                }
                 decrypt_transaction_memo(
                     key,
                     &transaction_bytes,
@@ -242,7 +247,7 @@ pub fn scan_compact_blocks(
     end_height: u32,
     compact_blocks: &[u8],
 ) -> WorkerResponse {
-    match with_key(handle, |key| {
+    match with_key(handle, |key, _| {
         inspect_compact_blocks(key, compact_blocks, start_height, end_height)
     }) {
         Ok(receipts) => WorkerResponse::success(&receipts),
@@ -251,17 +256,10 @@ pub fn scan_compact_blocks(
 }
 
 fn hex_to_bytes(s: &str, expected_len: usize) -> Result<Vec<u8>, VincaError> {
-    let bytes = hex::decode(s).map_err(|e| {
-        VincaError::InvalidEncoding(format!("Invalid hex string: {:?}", e))
-    })?;
-    if bytes.len() != expected_len {
-        return Err(VincaError::InvalidEncoding(format!(
-            "Expected {} bytes, got {}",
-            expected_len,
-            bytes.len()
-        )));
+    if s.len() != expected_len * 2 || !s.as_bytes().iter().all(u8::is_ascii_hexdigit) {
+        return Err(VincaError::InvalidEncoding("Invalid receiver hex encoding.".into()));
     }
-    Ok(bytes)
+    hex::decode(s).map_err(|_| VincaError::InvalidEncoding("Invalid receiver hex encoding.".into()))
 }
 
 // Simple internal hex decoder to avoid extra heavy dependencies

@@ -5,11 +5,17 @@
   redesign will be required when real services are integrated behind them.
 */
 
+export type {
+  MemoData,
+  MemoFormat,
+} from "@/types";
+
 import type {
   ContextSummary,
   CoverageRange,
   DisclosurePreview,
   DisclosurePreviewRequest,
+  MemoData,
   Network,
   PoolKind,
   Receipt,
@@ -71,10 +77,8 @@ export interface WorkerScanResult {
   readonly commonAncestorHeight?: number;
 }
 
-export interface WorkerDecryptedMemoResult {
-  readonly format: "text" | "arbitrary-bytes";
-  readonly text: string;
-  readonly rawBytesHex?: string;
+export interface WorkerDecryptedMemoResult extends MemoData {
+  readonly rawBytesHex: string;
 }
 
 export interface VincaWorkerPort {

@@ -1,6 +1,43 @@
 /* @ts-self-types="./vinca_wasm.d.ts" */
 
 /**
+ * Decrypts a selected memo directly from bounded full transaction bytes.
+ * @param {string} handle
+ * @param {Uint8Array} transaction_bytes
+ * @param {string} expected_tx_id_hex
+ * @param {number} block_height
+ * @param {string} network
+ * @param {string} pool
+ * @param {number} action_index
+ * @param {string} expected_amount_zatoshis
+ * @returns {string}
+ */
+export function decrypt_transaction_memo(handle, transaction_bytes, expected_tx_id_hex, block_height, network, pool, action_index, expected_amount_zatoshis) {
+    let deferred7_0;
+    let deferred7_1;
+    try {
+        const ptr0 = passStringToWasm0(handle, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(transaction_bytes, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(expected_tx_id_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ptr4 = passStringToWasm0(pool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len4 = WASM_VECTOR_LEN;
+        const ptr5 = passStringToWasm0(expected_amount_zatoshis, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len5 = WASM_VECTOR_LEN;
+        const ret = wasm.decrypt_transaction_memo(ptr0, len0, ptr1, len1, ptr2, len2, block_height, ptr3, len3, ptr4, len4, action_index, ptr5, len5);
+        deferred7_0 = ret[0];
+        deferred7_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred7_0, deferred7_1, 1);
+    }
+}
+
+/**
  * Dispatches a raw JSON request from the Web Worker thread into the Rust core.
  *
  * Returns a serialized `WorkerResponse` JSON string:

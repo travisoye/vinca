@@ -32,6 +32,7 @@ import {
 import type {
   ContextSummary,
   DisclosureHistoryItem,
+  MemoData,
   Receipt,
   WorkspacePhase,
 } from "@/types";
@@ -80,7 +81,8 @@ export interface WorkspaceContextValue {
   unarchiveContext: (id: string) => Promise<void>;
   deleteContext: (id: string) => Promise<void>;
   scanContext: (contextId: string) => Promise<ScanResult>;
-  requestMemo: (receiptId: string) => Promise<string>;
+  requestMemo: (receiptId: string) => Promise<MemoData>;
+  importOfflineMemo: (receiptId: string, txBytes: Uint8Array) => Promise<MemoData>;
   recordDisclosure: (
     item: Omit<DisclosureHistoryItem, "id" | "createdAtUtc">,
   ) => DisclosureHistoryItem;
@@ -124,6 +126,9 @@ export function WorkspaceProvider({
   // Active handles map: contextId -> OpaqueKeyHandle held in worker memory
   const activeHandlesRef = useRef<Map<string, OpaqueKeyHandle>>(new Map());
 
+  // Request generation: invalidates in-flight memo work on lock/reset/delete/navigation
+  const requestGenerationRef = useRef(0);
+
   // Instantiate singleton services
   const vault = getVaultAdapter();
   const worker = getWorkerClient();
@@ -154,6 +159,7 @@ export function WorkspaceProvider({
    */
   const unlock = useCallback(
     async (passphrase: string): Promise<boolean> => {
+      requestGenerationRef.current += 1;
       if (passphrase === SAMPLE_PASSPHRASE) {
         setPhase("unlocked");
         setMode("demo");
@@ -186,9 +192,10 @@ export function WorkspaceProvider({
    * Locks the workspace and clears key material in worker memory.
    */
   const lock = useCallback(async (): Promise<void> => {
+    requestGenerationRef.current += 1;
     // Destroy all active handles in worker
     for (const handle of activeHandlesRef.current.values()) {
-      await worker.destroyHandle(handle).catch(() => { });
+      await worker.destroyHandle(handle).catch(() => {});
     }
     activeHandlesRef.current.clear();
 
@@ -204,6 +211,7 @@ export function WorkspaceProvider({
    */
   const createVault = useCallback(
     async (passphrase: string): Promise<boolean> => {
+      requestGenerationRef.current += 1;
       if (passphrase.trim().length < 4) return false;
 
       try {
@@ -387,12 +395,12 @@ export function WorkspaceProvider({
    */
   const deleteContext = useCallback(
     async (id: string) => {
+      requestGenerationRef.current += 1;
       const handle = activeHandlesRef.current.get(id);
       if (handle) {
         void worker.destroyHandle(handle);
         activeHandlesRef.current.delete(id);
       }
-
       if (mode === "live") {
         await vault.deleteEncryptedContext(id).catch(() => { });
       }
@@ -407,10 +415,21 @@ export function WorkspaceProvider({
    * On-demand memo retrieval with user privacy confirmation.
    */
   const requestMemo = useCallback(
-    async (receiptId: string): Promise<string> => {
+    async (receiptId: string): Promise<MemoData> => {
+      if (phase !== "unlocked" || mode !== "live") {
+        throw new Error("Memo retrieval requires an unlocked live workspace.");
+      }
       const receipt = receipts.find((r) => r.id === receiptId);
       if (!receipt) {
         throw new Error("The selected receipt is no longer available in this workspace.");
+      }
+
+      if (receipt.memo.state === "available") {
+        return {
+          format: receipt.memo.format,
+          text: receipt.memo.text,
+          rawBytesHex: receipt.memo.rawBytesHex,
+        };
       }
 
       const context = contexts.find((c) => c.id === receipt.contextId);
@@ -423,22 +442,88 @@ export function WorkspaceProvider({
         throw new Error("The viewing key is not available in this session. Re-import it before decrypting a memo.");
       }
 
-      const updatedReceipt = await scannerRef.current.fetchAndDecryptMemo(
+      const generation = requestGenerationRef.current;
+      const isCurrent = () =>
+        generation === requestGenerationRef.current &&
+        activeHandlesRef.current.get(context.id) === handle;
+      const memo = await scannerRef.current.fetchAndDecryptMemo(
         context,
         handle,
         receipt,
+        isCurrent,
       );
 
-      if (updatedReceipt.memo.state !== "available") {
-        throw new Error("The worker did not return a decrypted memo.");
+      if (!isCurrent()) {
+        throw new Error("Memo request was cancelled because the workspace changed.");
       }
 
+      const updatedReceipt: Receipt = {
+        ...receipt,
+        memo: { state: "available", ...memo },
+      };
       setReceipts((prev) =>
         prev.map((r) => (r.id === receiptId ? updatedReceipt : r)),
       );
-      return updatedReceipt.memo.text;
+      return memo;
     },
-    [contexts, receipts],
+    [contexts, receipts, phase, mode],
+  );
+
+  /**
+   * Offline memo import: decrypts a memo from raw full-transaction bytes
+   * without any relay request. Requires an unlocked live workspace and the
+   * context's active handle.
+   */
+  const importOfflineMemo = useCallback(
+    async (receiptId: string, txBytes: Uint8Array): Promise<MemoData> => {
+      if (phase !== "unlocked" || mode !== "live") {
+        throw new Error("Offline memo import requires an unlocked live workspace.");
+      }
+      const receipt = receipts.find((r) => r.id === receiptId);
+      if (!receipt) {
+        throw new Error("The selected receipt is no longer available in this workspace.");
+      }
+
+      const context = contexts.find((c) => c.id === receipt.contextId);
+      if (!context) {
+        throw new Error("The context for this receipt is no longer available.");
+      }
+
+      const handle = activeHandlesRef.current.get(context.id);
+      if (!handle) {
+        throw new Error("The viewing key is not available in this session. Re-import it before importing a memo.");
+      }
+
+      if (mode !== "live") {
+        throw new Error("Offline memo import requires a live unlocked workspace.");
+      }
+
+      const generation = requestGenerationRef.current;
+      const isCurrent = () =>
+        generation === requestGenerationRef.current &&
+        activeHandlesRef.current.get(context.id) === handle;
+      const memo = await scannerRef.current.importOfflineMemo(
+        context,
+        handle,
+        receipt,
+        txBytes,
+        isCurrent,
+      );
+
+      if (!isCurrent()) {
+        throw new Error("Offline memo import was cancelled because the workspace changed.");
+      }
+
+      const updatedReceipt: Receipt = {
+        ...receipt,
+        memo: { state: "available", ...memo },
+      };
+      setReceipts((prev) =>
+        prev.map((r) => (r.id === receiptId ? updatedReceipt : r)),
+      );
+      return memo;
+    },
+    [contexts, receipts, mode, phase],
   );
 
   /**
@@ -518,6 +603,11 @@ export function WorkspaceProvider({
    * Resets workspace state.
    */
   const resetWorkspace = useCallback(async (): Promise<void> => {
+    requestGenerationRef.current += 1;
+    for (const handle of activeHandlesRef.current.values()) {
+      await worker.destroyHandle(handle).catch(() => {});
+    }
+    activeHandlesRef.current.clear();
     if (mode === "live") {
       await vault.lockVault().catch(() => { });
     }
@@ -526,7 +616,7 @@ export function WorkspaceProvider({
     setContexts([]);
     setReceipts([]);
     setDisclosureHistory([]);
-  }, [mode, vault]);
+  }, [mode, vault, worker]);
 
   /**
    * Checks storage quota.
@@ -563,6 +653,7 @@ export function WorkspaceProvider({
         deleteContext,
         scanContext,
         requestMemo,
+        importOfflineMemo,
         recordDisclosure,
         exportRecoveryBackup,
         importRecoveryBackup,

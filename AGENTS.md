@@ -52,6 +52,9 @@ commit/change that introduces them.
 ```
 vinca/
   AGENTS.md                       this file (agent onboarding + rules)
+  .kilo/plans/
+    1793028772984-memo-end-to-end-fix.md  memo behavior source plan
+    20261027-memo-end-to-end-execution.md execution and validation checklist
   implementation docs/
     prd.md                        authoritative PRD and phase ledger
     projectcontext.md             live state, phase log, freeze exceptions

@@ -1,12 +1,6 @@
 /*
   tests/relay_tests.rs — Phase 7 relay test suite.
 
-  Validation-freeze notice
-  ────────────────────────
-  These tests are WRITTEN but NOT EXECUTED under the Phase 7 validation
-  freeze. They will be run only after the user explicitly lifts the freeze
-  at the Phase 9 authorised-validation gate.
-
   Coverage groups
   ───────────────
 
@@ -87,12 +81,19 @@
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::Arc;
 
+    use axum::response::IntoResponse;
+    use axum_test::TestServer;
+    use crate::AppState;
     use crate::config::{
         Checkpoint, CacheConfig, LimitsConfig, Network, NetworkProfile, ProfileIndex, RelayConfig,
     };
     use crate::error::RelayError;
-    use crate::upstream::cache::{BlockRangeCacheKey, TxCacheKey};
+    use crate::upstream::{
+        UpstreamClients,
+        cache::{BlockRangeCacheKey, RelayCache, TxCacheKey},
+    };
     use crate::validation::{
         parse_network, validate_action_count, validate_block_hash, validate_checkpoints,
         validate_height, validate_range, validate_response_size, validate_txid,
@@ -426,29 +427,29 @@ mod tests {
     // I. Error HTTP status mapping
     // -------------------------------------------------------------------------
 
-    fn status_of(err: &RelayError) -> u16 {
-        err.status_code().as_u16()
+    fn status_of(err: RelayError) -> u16 {
+        err.into_response().status().as_u16()
     }
 
     #[test]
     fn i1_mainnet_rejected_is_403() {
-        assert_eq!(status_of(&RelayError::MainnetRejected), 403);
+        assert_eq!(status_of(RelayError::MainnetRejected), 403);
     }
 
     #[test]
     fn i2_unsupported_network_is_404() {
-        assert_eq!(status_of(&RelayError::UnsupportedNetwork("x".into())), 404);
+        assert_eq!(status_of(RelayError::UnsupportedNetwork("x".into())), 404);
     }
 
     #[test]
     fn i3_invalid_txid_is_400() {
-        assert_eq!(status_of(&RelayError::InvalidTxId("bad".into())), 400);
+        assert_eq!(status_of(RelayError::InvalidTxId("bad".into())), 400);
     }
 
     #[test]
     fn i4_range_too_large_is_400() {
         assert_eq!(
-            status_of(&RelayError::RangeTooLarge { requested: 2000, max: 1000 }),
+            status_of(RelayError::RangeTooLarge { requested: 2000, max: 1000 }),
             400
         );
     }
@@ -456,7 +457,7 @@ mod tests {
     #[test]
     fn i5_rate_limited_is_429() {
         assert_eq!(
-            status_of(&RelayError::RateLimited { retry_after_secs: 60 }),
+            status_of(RelayError::RateLimited { retry_after_secs: 60 }),
             429
         );
     }
@@ -464,7 +465,7 @@ mod tests {
     #[test]
     fn i6_upstream_unavailable_is_502() {
         assert_eq!(
-            status_of(&RelayError::UpstreamUnavailable { reason: "down".into() }),
+            status_of(RelayError::UpstreamUnavailable { reason: "down".into() }),
             502
         );
     }
@@ -472,20 +473,20 @@ mod tests {
     #[test]
     fn i7_source_stale_is_502() {
         assert_eq!(
-            status_of(&RelayError::SourceStale { tip_height: 0 }),
+            status_of(RelayError::SourceStale { tip_height: 0 }),
             502
         );
     }
 
     #[test]
     fn i8_response_too_large_is_502() {
-        assert_eq!(status_of(&RelayError::ResponseTooLarge), 502);
+        assert_eq!(status_of(RelayError::ResponseTooLarge), 502);
     }
 
     #[test]
     fn i9_internal_error_is_500() {
         assert_eq!(
-            status_of(&RelayError::Internal(anyhow::anyhow!("oops"))),
+            status_of(RelayError::Internal(anyhow::anyhow!("oops"))),
             500
         );
     }
@@ -512,22 +513,33 @@ mod tests {
     // K. Error JSON body structure
     // -------------------------------------------------------------------------
 
-    #[test]
-    fn k1_error_code_is_set() {
-        let err = RelayError::MainnetRejected;
-        assert_eq!(err.error_code(), "MAINNET_REJECTED");
+    async fn error_body(err: RelayError) -> serde_json::Value {
+        let response = err.into_response();
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .expect("error response body should be readable");
+        serde_json::from_slice(&bytes).expect("error response body should be JSON")
     }
 
-    #[test]
-    fn k2_rate_limit_error_code_correct() {
-        let err = RelayError::RateLimited { retry_after_secs: 30 };
-        assert_eq!(err.error_code(), "RATE_LIMITED");
+    #[tokio::test]
+    async fn k1_error_response_has_a_safe_code_and_message() {
+        let body = error_body(RelayError::MainnetRejected).await;
+        assert_eq!(body["error_code"], "MAINNET_REJECTED");
+        assert!(body["message"].is_string());
     }
 
-    #[test]
-    fn k3_internal_error_code_correct() {
-        let err = RelayError::Internal(anyhow::anyhow!("boom"));
-        assert_eq!(err.error_code(), "INTERNAL_ERROR");
+    #[tokio::test]
+    async fn k2_rate_limit_response_includes_retry_after() {
+        let body = error_body(RelayError::RateLimited { retry_after_secs: 30 }).await;
+        assert_eq!(body["error_code"], "RATE_LIMITED");
+        assert_eq!(body["retry_after_secs"], 30);
+    }
+
+    #[tokio::test]
+    async fn k3_internal_error_response_omits_retry_after() {
+        let body = error_body(RelayError::Internal(anyhow::anyhow!("boom"))).await;
+        assert_eq!(body["error_code"], "INTERNAL_ERROR");
+        assert!(body.get("retry_after_secs").is_none());
     }
 
     // -------------------------------------------------------------------------
@@ -575,5 +587,63 @@ mod tests {
             end_height: 200,
         };
         assert_ne!(k1, k2);
+    }
+
+    #[tokio::test]
+    async fn transaction_route_returns_cached_raw_bytes_unchanged() {
+        let config = test_config_with_profiles(vec![test_profile(Network::Testnet)]);
+        let display_txid = "0123456789abcdef".repeat(4);
+        let transaction_bytes = vec![0x05, 0x00, 0x00, 0x80, 0xaa, 0xbb];
+        let cache = Arc::new(RelayCache::new(&config.cache));
+        cache
+            .put_transaction(
+                TxCacheKey {
+                    network: "testnet".to_string(),
+                    txid_hex: display_txid.clone(),
+                },
+                transaction_bytes.clone(),
+            )
+            .await;
+
+        let state = AppState {
+            profiles: Arc::new(ProfileIndex::from_config(&config)),
+            clients: Arc::new(UpstreamClients::from_config(&config).await.unwrap()),
+            cache,
+            config: Arc::new(config),
+        };
+        let server = TestServer::new(crate::routes::build_router(state)).unwrap();
+        let response = server
+            .get(&format!("/tx/testnet/{display_txid}"))
+            .await;
+
+        response.assert_status_ok();
+        assert_eq!(response.as_bytes().as_ref(), transaction_bytes.as_slice());
+    }
+
+    #[tokio::test]
+    async fn failed_transaction_fetch_is_not_cached() {
+        let mut profile = test_profile(Network::Testnet);
+        profile.upstream_url = "http://127.0.0.1:1".to_string();
+        let config = test_config_with_profiles(vec![profile]);
+        let display_txid = "0123456789abcdef".repeat(4);
+        let cache = Arc::new(RelayCache::new(&config.cache));
+        let cache_key = TxCacheKey {
+            network: "testnet".to_string(),
+            txid_hex: display_txid.clone(),
+        };
+        let state = AppState {
+            profiles: Arc::new(ProfileIndex::from_config(&config)),
+            clients: Arc::new(UpstreamClients::from_config(&config).await.unwrap()),
+            cache: cache.clone(),
+            config: Arc::new(config),
+        };
+        let server = TestServer::new(crate::routes::build_router(state)).unwrap();
+
+        let response = server
+            .get(&format!("/tx/testnet/{display_txid}"))
+            .await;
+
+        response.assert_status(axum::http::StatusCode::BAD_GATEWAY);
+        assert!(cache.get_transaction(&cache_key).await.is_none());
     }
 }
