@@ -6,7 +6,7 @@
 
 ---
 
-> **Testnet scanning status (2026-10-26):** Testnet UIVK import and compact
+> **Testnet scanning status (2026-10-27):** Testnet UIVK import and compact
 > Orchard/Ironwood block trial-decryption are now wired through the Rust WASM
 > worker. Local cryptographic vectors and scanner tests pass, and the WASM
 > package builds. This does **not** confirm any particular wallet receipt:
@@ -15,6 +15,13 @@
 > locally and its real birthday height; verify that the relay is connected and
 > the resulting coverage includes the height of the receipt. Never send the key
 > in chat.
+>
+> **Memo implementation status:** The generated WASM package now exposes
+> full-transaction Orchard/Ironwood memo decryption. Synthetic encrypted
+> transaction vectors, worker/API tests, frontend tests, typecheck, and
+> production build passed on 2026-10-27. A full browser memo request through
+> the hosted relay has not been verified: the local browser was blocked by
+> relay CORS, and no user key or transaction was used.
 
 ## 1. Overview
 
@@ -31,7 +38,7 @@ When sharing viewing capabilities or audit evidence, wallet developers face crit
   1. **Context-Access Package:** Exports continuing viewing access with cryptographic warning disclosures and unambiguous retained-copy notices.
   2. **Record Snapshot:** Exports selected transaction receipts and metadata with **zero key material** and zero note-opening secrets.
 - **Zero-Float Financial Math:** All values are represented as exact integer zatoshis (`Zatoshis = string`), transported as decimal strings, and formatted via BigInt arithmetic.
-- **Memo Retrieval Status:** Memos are never fetched automatically, and the interface requires explicit consent before a transaction query. The generated WASM package in this workspace does not yet expose a verified full-transaction memo decryptor, so the current worker reports an explicit unavailable error rather than displaying a memo.
+- **Memo Retrieval Status:** Memos are never fetched automatically, and the interface requires explicit consent before a transaction query. The generated WASM package supports local full-transaction memo decryption, preserving text and raw ZIP-302 bytes. Synthetic vectors passed; a hosted browser memo flow and any particular live receipt remain unverified.
 - **Permanent Mainnet Rejection:** Vinca strictly rejects mainnet keys, addresses, and chain endpoints at all architectural boundaries.
 
 ---
@@ -47,8 +54,8 @@ When sharing viewing capabilities or audit evidence, wallet developers face crit
 │  │   (apps/web)           │         │      (crates/vinca-wasm)       │  │
 │  │  • Workbench UI        │ Message │  • ZIP 316 UIVK Parser         │  │
 │  │  • Capability Compare  │ Channel │  • Opaque Key Handle Map       │  │
-│  │  • Disclosure Exporter │◄───────►│  • Note Trial Decryptor        │  │
-│  │  • Live Scanner UI     │         │  • Zero-knowledge Isolation    │  │
+│  │  • Disclosure Exporter │◄───────►│  • Note/Memo Decryptor         │  │
+│  │  • Live Scanner UI     │         │  • Local Key Isolation         │  │
 │  └───────────┬────────────┘         └────────────────────────────────┘  │
 │              │                                                          │
 │  ┌───────────▼────────────┐                                             │
@@ -236,6 +243,25 @@ that live testnet note decryption works; see the operational status above.
 | **Rust WASM Worker Suite** | `cargo test -p vinca-wasm` | Passed | 2 / 2 tests in 0.02s |
 | **WASM Target Compilation** | `cargo check --target wasm32-unknown-unknown -p vinca-wasm` | Passed | 0 errors |
 | **Local Privacy Review** | Visual / Code Audit | Verified | Zero raw keys outside worker; exact BigInt zatoshis; mainnet rejected |
+
+### Memo follow-up validation (2026-10-27)
+
+| Test / Verification Suite | Command | Result | Pass Rate / Metric |
+| :--- | :--- | :--- | :--- |
+| **Rust Core Memo Suite** | `cargo test --locked --offline -p vinca-core` | Passed | 31 tests |
+| **WASM Worker API Suite** | `cargo test --locked --offline -p vinca-wasm --test wasm_worker_tests` | Passed | 5 tests |
+| **Chain Relay Suite** | `cargo test --locked --offline -p vinca-chain-relay` | Passed | 52 tests |
+| **Focused Frontend Suites** | `npx vitest run` with worker protocol, live integration, dashboard workflows, and vault engine selectors | Passed | 79 tests |
+| **TypeScript Typecheck** | `npm run typecheck` | Passed | 0 errors |
+| **WASM Target / Package** | `cargo check --locked --offline --target wasm32-unknown-unknown -p vinca-wasm`; `wasm-pack build --mode no-install --no-opt -- --locked --offline` | Passed | Compiled and regenerated bindings/package |
+| **Generated Memo Export** | Node invocation with synthetic UIVK and encrypted transaction fixture | Passed | Text and all 512 raw memo bytes returned |
+| **Frontend Production Build** | `npm run build` | Passed | `dist/` generated; existing large-chunk warning |
+
+These are synthetic/source validation results, not mined-transaction,
+consensus, hosted-browser, or user-receipt evidence. The local browser could
+not call the hosted relay because of CORS. A separate local Docker image build
+also remains unverified because Docker Desktop's Linux engine was unavailable;
+the Dockerfile now copies the tracked `vendor/` override required by Cargo.
 
 ---
 

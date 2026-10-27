@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 
 export function AppDashboardPage() {
-  const { contexts, receipts, mode } = useWorkspace();
+  const { contexts, receipts } = useWorkspace();
   const [selectedId, setSelectedId] = useState<string | null>(contexts[0]?.id ?? null);
 
   const context = contexts.find((entry) => entry.id === selectedId) ?? null;
@@ -107,14 +107,10 @@ export function AppDashboardPage() {
           <Card>
             <CardHeader className="pb-2">
               <CardDescription className="text-xs uppercase tracking-wider">Evidence Status</CardDescription>
-              <CardTitle className="text-2xl">
-                {mode === "live" ? "Live Local Scan" : "Sample / Replay"}
-              </CardTitle>
+              <CardTitle className="text-2xl">Live Local Scan</CardTitle>
             </CardHeader>
             <CardContent className="text-xs text-muted-foreground">
-              {mode === "live"
-                ? "Locally inspected via relay · Zero key transmission"
-                : "Presentation fixtures · No live-chain claims"}
+              Locally inspected via relay · Zero key transmission
             </CardContent>
           </Card>
         </div>

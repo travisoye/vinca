@@ -1,5 +1,5 @@
 /*
-  context/workspace-context.tsx — Integrated Vinca Workspace Context (Phase 8).
+  context/workspace-context.tsx — Integrated Vinca Workspace Context.
 
   Unifies presentation layer with the real service stack:
     • VincaWorkerPort (via getWorkerClient() from adapters/worker-client.ts)
@@ -7,10 +7,9 @@
     • VincaRelayPort (via getRelayClient() from adapters/relay-client.ts)
     • LiveScanner (from lib/scanner/live-scanner.ts)
 
-  Modes:
-    • "demo": deterministic in-memory synthetic fixture data (SAMPLE_PASSPHRASE).
-    • "live": encrypted IndexedDB persistence via PBKDF2/AES-256-GCM AEAD,
-      local WASM trial decryption, and public relay compact block range queries.
+  Always live mode: encrypted IndexedDB persistence via PBKDF2/AES-256-GCM AEAD,
+  local WASM trial decryption, and public relay compact block range queries.
+  No demo/synthetic shortcuts — all connections are real live testnet/regtest.
 */
 
 import {
@@ -22,13 +21,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  fixtureContexts,
-  fixtureReceipts,
-  initialDisclosureHistory,
-  SAMPLE_PASSPHRASE,
-  type ImportCandidate,
-} from "@/fixtures";
+import type { ImportCandidate } from "@/fixtures";
 import type {
   ContextSummary,
   DisclosureHistoryItem,
@@ -61,7 +54,7 @@ export interface StorageStats {
 
 export interface WorkspaceContextValue {
   readonly phase: WorkspacePhase;
-  readonly mode: "demo" | "live";
+  readonly mode: "live";
   readonly contexts: readonly ContextSummary[];
   readonly receipts: readonly Receipt[];
   readonly disclosureHistory: readonly DisclosureHistoryItem[];
@@ -99,27 +92,13 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({
   children,
-  initialMode = "live",
 }: {
   children: ReactNode;
-  initialMode?: "demo" | "live";
 }) {
-  const isTestEnv =
-    typeof import.meta !== "undefined" &&
-    import.meta.env &&
-    import.meta.env.MODE === "test";
-  const isDemo = initialMode === "demo";
-  const [phase, setPhase] = useState<WorkspacePhase>("unlocked");
-  const [mode, setMode] = useState<"demo" | "live">(initialMode);
-  const [contexts, setContexts] = useState<readonly ContextSummary[]>(
-    isTestEnv || isDemo ? fixtureContexts : [],
-  );
-  const [receipts, setReceipts] = useState<readonly Receipt[]>(
-    isTestEnv || isDemo ? fixtureReceipts : [],
-  );
-  const [disclosureHistory, setDisclosureHistory] = useState<readonly DisclosureHistoryItem[]>(
-    isTestEnv || isDemo ? initialDisclosureHistory : [],
-  );
+  const [phase, setPhase] = useState<WorkspacePhase>("locked");
+  const [contexts, setContexts] = useState<readonly ContextSummary[]>([]);
+  const [receipts, setReceipts] = useState<readonly Receipt[]>([]);
+  const [disclosureHistory, setDisclosureHistory] = useState<readonly DisclosureHistoryItem[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgressUpdate | null>(null);
 
@@ -153,21 +132,12 @@ export function WorkspaceProvider({
   }, [relay]);
 
   /**
-   * Unlocks the workspace.
-   * If passphrase is SAMPLE_PASSPHRASE: unlocks demo mode.
-   * Otherwise: attempts unlock against the encrypted vault in IndexedDB.
+   * Unlocks the workspace against the encrypted vault in IndexedDB.
+   * Always live mode — no demo shortcut.
    */
   const unlock = useCallback(
     async (passphrase: string): Promise<boolean> => {
       requestGenerationRef.current += 1;
-      if (passphrase === SAMPLE_PASSPHRASE) {
-        setPhase("unlocked");
-        setMode("demo");
-        setContexts(fixtureContexts);
-        setReceipts(fixtureReceipts);
-        return true;
-      }
-
       try {
         const ok = await vault.unlockVault(passphrase);
         if (ok) {
@@ -176,7 +146,6 @@ export function WorkspaceProvider({
           setContexts(loadedContexts);
           setReceipts(loadedReceipts);
           setPhase("unlocked");
-          setMode("live");
           return true;
         }
       } catch {
@@ -198,13 +167,9 @@ export function WorkspaceProvider({
       await worker.destroyHandle(handle).catch(() => {});
     }
     activeHandlesRef.current.clear();
-
-    if (mode === "live") {
-      await vault.lockVault().catch(() => { });
-    }
-
+    await vault.lockVault().catch(() => { });
     setPhase("locked");
-  }, [mode, vault, worker]);
+  }, [vault, worker]);
 
   /**
    * Creates a new encrypted vault in IndexedDB with the given passphrase.
@@ -214,27 +179,20 @@ export function WorkspaceProvider({
       requestGenerationRef.current += 1;
       if (passphrase.trim().length < 4) return false;
 
-      try {
-        await vault.initializeVault(passphrase);
-        setContexts([]);
-        setReceipts([]);
-        setPhase("unlocked");
-        setMode("live");
-        return true;
-      } catch {
-        // Fallback for environments where IndexedDB is blocked
-        setPhase("unlocked");
-        setMode("live");
-        return true;
-      }
+      await vault.initializeVault(passphrase);
+      setContexts([]);
+      setReceipts([]);
+      setPhase("unlocked");
+      return true;
     },
     [vault],
   );
 
   /**
    * Adds an imported viewing key candidate.
-   * Runs preflight through the worker, performs capability overlap checks,
-   * assigns an opaque handle, and persists to the vault if in live mode.
+   * Runs preflight through the WASM worker, performs capability overlap checks,
+   * assigns an opaque handle, and persists to the encrypted vault.
+   * Requires real raw viewing key bytes — no synthetic shortcut.
    */
   const addImportedCandidate = useCallback(
     async (
@@ -242,14 +200,12 @@ export function WorkspaceProvider({
       customLabel?: string,
       rawKeyBytes?: Uint8Array,
     ): Promise<string> => {
-      if (!rawKeyBytes && mode === "live") {
-        throw new Error("A real incoming viewing-key file is required for live import.");
+      if (!rawKeyBytes) {
+        throw new Error("A real incoming viewing-key file is required for import.");
       }
-      const bytesToDecode =
-        rawKeyBytes ?? new TextEncoder().encode(candidate.fileName + "\n" + candidate.label);
 
       // 1. Run through worker decode to validate format and policy
-      const decodeResult = await worker.decodeUivk(bytesToDecode, candidate.network);
+      const decodeResult = await worker.decodeUivk(rawKeyBytes, candidate.network);
 
       const newId = `ctx-imp-${Date.now()}`;
       activeHandlesRef.current.set(newId, decodeResult.handle);
@@ -298,15 +254,13 @@ export function WorkspaceProvider({
         note: candidate.description,
       };
 
-      // 3. Persist to vault if in live mode
-      if (mode === "live") {
-        await vault.saveEncryptedContext(newContext).catch(() => { });
-      }
+      // 3. Always persist to vault
+      await vault.saveEncryptedContext(newContext).catch(() => { });
 
       setContexts((prev) => [newContext, ...prev]);
       return newId;
     },
-    [contexts, mode, vault, worker],
+    [contexts, vault, worker],
   );
 
   /**
@@ -361,14 +315,12 @@ export function WorkspaceProvider({
         prev.map((c) => {
           if (c.id !== id) return c;
           const updated: ContextSummary = { ...c, status: "archived" as const };
-          if (mode === "live") {
-            void vault.saveEncryptedContext(updated);
-          }
+          void vault.saveEncryptedContext(updated);
           return updated;
         }),
       );
     },
-    [mode, vault],
+    [vault],
   );
 
   /**
@@ -380,14 +332,12 @@ export function WorkspaceProvider({
         prev.map((c) => {
           if (c.id !== id) return c;
           const updated: ContextSummary = { ...c, status: "active" as const };
-          if (mode === "live") {
-            void vault.saveEncryptedContext(updated);
-          }
+          void vault.saveEncryptedContext(updated);
           return updated;
         }),
       );
     },
-    [mode, vault],
+    [vault],
   );
 
   /**
@@ -401,14 +351,11 @@ export function WorkspaceProvider({
         void worker.destroyHandle(handle);
         activeHandlesRef.current.delete(id);
       }
-      if (mode === "live") {
-        await vault.deleteEncryptedContext(id).catch(() => { });
-      }
-
+      await vault.deleteEncryptedContext(id).catch(() => { });
       setContexts((prev) => prev.filter((c) => c.id !== id));
       setReceipts((prev) => prev.filter((r) => r.contextId !== id));
     },
-    [mode, vault, worker],
+    [vault, worker],
   );
 
   /**
@@ -416,8 +363,8 @@ export function WorkspaceProvider({
    */
   const requestMemo = useCallback(
     async (receiptId: string): Promise<MemoData> => {
-      if (phase !== "unlocked" || mode !== "live") {
-        throw new Error("Memo retrieval requires an unlocked live workspace.");
+      if (phase !== "unlocked") {
+        throw new Error("Memo retrieval requires an unlocked workspace.");
       }
       const receipt = receipts.find((r) => r.id === receiptId);
       if (!receipt) {
@@ -466,7 +413,7 @@ export function WorkspaceProvider({
       );
       return memo;
     },
-    [contexts, receipts, phase, mode],
+    [contexts, receipts, phase],
   );
 
   /**
@@ -476,8 +423,8 @@ export function WorkspaceProvider({
    */
   const importOfflineMemo = useCallback(
     async (receiptId: string, txBytes: Uint8Array): Promise<MemoData> => {
-      if (phase !== "unlocked" || mode !== "live") {
-        throw new Error("Offline memo import requires an unlocked live workspace.");
+      if (phase !== "unlocked") {
+        throw new Error("Offline memo import requires an unlocked workspace.");
       }
       const receipt = receipts.find((r) => r.id === receiptId);
       if (!receipt) {
@@ -492,10 +439,6 @@ export function WorkspaceProvider({
       const handle = activeHandlesRef.current.get(context.id);
       if (!handle) {
         throw new Error("The viewing key is not available in this session. Re-import it before importing a memo.");
-      }
-
-      if (mode !== "live") {
-        throw new Error("Offline memo import requires a live unlocked workspace.");
       }
 
       const generation = requestGenerationRef.current;
@@ -523,7 +466,7 @@ export function WorkspaceProvider({
       );
       return memo;
     },
-    [contexts, receipts, mode, phase],
+    [contexts, receipts, phase],
   );
 
   /**
@@ -547,29 +490,9 @@ export function WorkspaceProvider({
    */
   const exportRecoveryBackup = useCallback(
     async (passphrase: string): Promise<RecoveryBackupBundle> => {
-      if (mode === "live") {
-        return vault.exportRecoveryBackup(passphrase);
-      }
-
-      // Demo mode synthetic bundle
-      return {
-        vincaRecoveryVersion: "1.0",
-        createdAtUtc: new Date().toISOString(),
-        saltHex: "00112233445566778899aabbccddeeff",
-        kdfIterations: 600_000,
-        encryptedContexts: contexts.map(() => ({
-          nonceHex: "00".repeat(12),
-          ciphertextHex: "aa".repeat(64),
-          aadHex: "bb".repeat(16),
-        })),
-        encryptedReceipts: receipts.map(() => ({
-          nonceHex: "00".repeat(12),
-          ciphertextHex: "cc".repeat(64),
-          aadHex: "dd".repeat(16),
-        })),
-      };
+      return vault.exportRecoveryBackup(passphrase);
     },
-    [contexts, mode, receipts, vault],
+    [vault],
   );
 
   /**
@@ -580,23 +503,14 @@ export function WorkspaceProvider({
       bundle: RecoveryBackupBundle,
       passphrase: string,
     ): Promise<RecoveryRestoreResult> => {
-      if (mode === "live") {
-        const result = await vault.importRecoveryBackup(bundle, passphrase);
-        const reloadedContexts = await vault.loadAllContexts();
-        const reloadedReceipts = await vault.loadAllReceipts();
-        setContexts(reloadedContexts);
-        setReceipts(reloadedReceipts);
-        return result;
-      }
-
-      // Demo mode restore
-      return {
-        restoredContextsCount: contexts.length,
-        restoredReceiptsCount: receipts.length,
-        staleCoverageWarning: true,
-      };
+      const result = await vault.importRecoveryBackup(bundle, passphrase);
+      const reloadedContexts = await vault.loadAllContexts();
+      const reloadedReceipts = await vault.loadAllReceipts();
+      setContexts(reloadedContexts);
+      setReceipts(reloadedReceipts);
+      return result;
     },
-    [contexts.length, mode, receipts.length, vault],
+    [vault],
   );
 
   /**
@@ -608,15 +522,12 @@ export function WorkspaceProvider({
       await worker.destroyHandle(handle).catch(() => {});
     }
     activeHandlesRef.current.clear();
-    if (mode === "live") {
-      await vault.lockVault().catch(() => { });
-    }
-    setPhase("unlocked");
-    setMode("live");
+    await vault.lockVault().catch(() => { });
+    setPhase("locked");
     setContexts([]);
     setReceipts([]);
     setDisclosureHistory([]);
-  }, [mode, vault, worker]);
+  }, [vault, worker]);
 
   /**
    * Checks storage quota.
@@ -636,7 +547,7 @@ export function WorkspaceProvider({
     <WorkspaceContext.Provider
       value={{
         phase,
-        mode,
+        mode: "live",
         contexts,
         receipts,
         disclosureHistory,

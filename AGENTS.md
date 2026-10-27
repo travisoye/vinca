@@ -38,6 +38,11 @@ commit/change that introduces them.
 - **No fake verification.** Every sample state is labelled; totals are never
   called balances; fixtures never get live-chain badges; mocked exports are
   never presented as protocol results.
+- **No demo mode, no synthetic data in production.** The app always runs in
+  live mode. Demo shortcuts (SAMPLE_PASSPHRASE bypass, fixture catalog tabs,
+  offline relay fallbacks) are permanently removed. All connections must be
+  real live testnet/regtest. Do not re-add any demo or synthetic shortcut
+  without explicit user authorisation.
 - **Keys never leave the browser** and never enter route paths, query params,
   document titles, telemetry or general React state. Use opaque handles later.
 - **Money is exact:** integer zatoshis transported as decimal strings and
@@ -90,6 +95,10 @@ Additional implementation locations:
   block trial decryption are wired through the browser WASM worker. Focused Rust
   and frontend tests, typecheck, WASM build, and production build passed on
   2026-10-26.
+- Memo follow-up: full-transaction Orchard/Ironwood memo decryption is now
+  exposed by the generated WASM package. Synthetic protocol vectors and focused
+  tests/builds passed on 2026-10-27; the hosted browser flow remains unverified
+  because the local browser was blocked by relay CORS.
 - Not verified: no scan with the user's key was performed, and no receipt is
   confirmed. Production deployment has not been authorized.
 

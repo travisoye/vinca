@@ -539,9 +539,9 @@ export function DocsPage() {
                   </div>
                   <p className="text-xs text-muted-foreground leading-relaxed">
                     Scanning compact blocks detects note values and commitments. Plaintext memo fields require an
-                    explicit user confirmation before any full-transaction query. The generated WASM package in this
-                    workspace does not yet expose a verified full-transaction memo decryptor, so requests return an
-                    explicit unavailable error.
+                    explicit user confirmation before any full-transaction query. The generated WASM package
+                    decrypts the selected memo locally and preserves its ZIP-302 format and raw bytes. Synthetic
+                    transaction tests pass; the hosted browser flow has not yet been verified.
                   </p>
                 </div>
               </div>
@@ -1028,9 +1028,10 @@ export function DocsPage() {
                   by design.
                 </p>
                 <p>
-                  The generated WASM package does not yet expose a verified full-transaction memo decryptor. A
-                  request therefore returns an explicit unavailable error, and offline transaction import does not
-                  parse or save transaction data.
+                  The generated WASM package exposes full-transaction memo decryption, and offline transaction
+                  import uses the same local verification path without contacting the relay. Synthetic transaction
+                  vectors and focused tests pass. The complete browser flow remains unverified because the local
+                  browser could not access the hosted relay; no user key or transaction was used.
                 </p>
                 <p>
                   Recovery depends on your own encrypted exports rather than any hosted copy of the

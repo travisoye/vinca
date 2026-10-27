@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY services/chain-relay/ services/chain-relay/
+COPY vendor/ vendor/
 
 # Build release binary for chain relay
 RUN cargo build --release -p vinca-chain-relay

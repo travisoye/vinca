@@ -3,6 +3,9 @@ services:
     name: vinca-relay
     runtime: docker
     dockerfilePath: ./services/chain-relay/Dockerfile
+    # Build context must be the repo root so the Dockerfile can COPY Cargo.toml,
+    # crates/, vendor/, and services/chain-relay/ as a unified Cargo workspace.
+    dockerContext: .
     plan: free
     region: oregon
     healthCheckPath: /health

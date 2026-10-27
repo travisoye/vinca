@@ -62,9 +62,9 @@ function AppRoutes() {
   );
 }
 
-function App({ initialMode = "live" }: { initialMode?: "demo" | "live" } = {}) {
+function App() {
   return (
-    <WorkspaceProvider initialMode={initialMode}>
+    <WorkspaceProvider>
       <AppRoutes />
     </WorkspaceProvider>
   );
